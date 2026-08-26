@@ -374,19 +374,97 @@ private struct ShortcutsPane: View {
                     }
                 }
             }
-            if filteredGroupsEmpty {
-                Section {
-                    Text("No command matches “\(search)”.")
-                        .foregroundStyle(.secondary)
+            Section("Custom") {
+                if controller.customBindings.isEmpty {
+                    Text("No custom bindings yet. Add extra combos for any command — space works as the nvim leader.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
+                ForEach(controller.customBindings) { b in
+                    CustomBindingRow(binding: binding(for: b))
+                }
+                AddCustomBindingRow()
             }
             Section("Reset") {
                 Button("Reset All Shortcuts") { controller.resetKeyBindings() }
                     .controlSize(.small)
+                Text("Reset restores built-ins; your custom bindings are kept.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding(20)
+    }
+
+    private func binding(for b: KeyBinding) -> Binding<KeyBinding> {
+        let id = b.id
+        return Binding(
+            get: { controller.keyBindings.first { $0.id == id } ?? b },
+            set: { newValue in
+                if let i = controller.keyBindings.firstIndex(where: { $0.id == id }) {
+                    controller.keyBindings[i] = newValue
+                }
+            }
+        )
+    }
+
+    /// Editable row for one user-defined combo.
+    private struct CustomBindingRow: View {
+        @EnvironmentObject private var controller: TerminalController
+        @Binding var binding: KeyBinding
+
+        var body: some View {
+            HStack(spacing: 10) {
+                Text(controller.title(for: binding))
+                Spacer(minLength: 8)
+                if controller.isConflicting(binding) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .help("Another command uses this combination")
+                }
+                ShortcutCaptureField(binding: $binding,
+                                     conflicting: controller.isConflicting(binding))
+                Button(role: .destructive) {
+                    controller.removeCustomBinding(binding.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove this custom binding")
+            }
+        }
+    }
+
+    /// "+" row that appends a new user-defined combo for any built-in command.
+    private struct AddCustomBindingRow: View {
+        @EnvironmentObject private var controller: TerminalController
+        @State private var actionId = TerminalController.commandCatalog.first?.id ?? ""
+        @State private var draft = KeyBinding(id: "custom.draft", key: "", modifiers: 0)
+
+        var body: some View {
+            HStack(spacing: 10) {
+                Picker("Command", selection: $actionId) {
+                    ForEach(TerminalController.commandCatalog) { cmd in
+                        Text("\(cmd.group) — \(cmd.title)").tag(cmd.id)
+                    }
+                }
+                .labelsHidden()
+                Spacer(minLength: 8)
+                ShortcutCaptureField(binding: $draft, conflicting: false)
+                Button {
+                    guard !draft.key.isEmpty else { return }
+                    controller.addCustomBinding(action: actionId,
+                                                key: draft.key, modifiers: draft.modifiers)
+                    draft.key = ""
+                    draft.modifiers = 0
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(draft.key.isEmpty)
+                .help("Add this custom binding")
+            }
+        }
     }
 
     private var filteredGroupsEmpty: Bool {
@@ -463,11 +541,13 @@ private struct ShortcutCaptureField: View {
         listening = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if event.keyCode == 53 { self.stopListening(); return nil }   // Esc cancels
-            // Ignore pure-modifier presses; accept any printable character.
-            guard let chars = event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespaces),
-                  let first = chars.first, !first.isWhitespace else { return event }
+            // Accept any printable character INCLUDING space (nvim <leader>);
+            // ignore pure-modifier presses.
+            guard let chars = event.charactersIgnoringModifiers,
+                  let first = chars.first,
+                  first == " " || !first.isWhitespace else { return event }
             var b = binding
-            b.key = String(first).lowercased()
+            b.key = first == " " ? " " : String(first).lowercased()
             b.modifiers = Int(Self.eventModifiers(event).rawValue)
             binding = b
             self.stopListening()
@@ -498,7 +578,11 @@ private struct ShortcutCaptureField: View {
         if m.contains(.shift)   { s += "⇧" }
         if m.contains(.option)  { s += "⌥" }
         if m.contains(.control) { s += "⌃" }
-        let k = b.key
-        return s + (k.count == 1 && k.first!.isLetter ? k.uppercased() : k)
+        switch b.key {
+        case " ": return s + "␣"                       // space / nvim leader
+        default:
+            let k = b.key
+            return s + (k.count == 1 && k.first!.isLetter ? k.uppercased() : k)
+        }
     }
 }

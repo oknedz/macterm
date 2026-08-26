@@ -151,20 +151,13 @@ struct HighlightingEditor: NSViewRepresentable {
         tv.selectedTextAttributes = [.backgroundColor: c.selectionColor]
     }
 
-        /// Re-highlight `text` (oceanic-next token colors) while forcing the
-        /// app font and stripping any per-token background so the terminal's
+        /// Re-highlight with the active theme's scheme while forcing the app
+        /// font and stripping any per-token background so the terminal's
         /// background/opacity shows through.
         @MainActor func apply(_ text: String) {
             guard let tv = tv else { return }
             let selected = tv.selectedRanges
-            if let lang = parent?.language,
-               let attr = highlighter?.highlight(text, as: lang) {
-                let themed = NSMutableAttributedString(attributedString: attr)
-                let full = NSRange(location: 0, length: themed.length)
-                if let f = parent?.controller.font {
-                    themed.addAttribute(.font, value: f, range: full)
-                }
-                themed.removeAttribute(.backgroundColor, range: full)
+            if let themed = highlight(text) {
                 tv.textStorage?.setAttributedString(themed)
             } else {
                 tv.string = text
@@ -177,19 +170,45 @@ struct HighlightingEditor: NSViewRepresentable {
             guard let tv = notification.object as? NSTextView else { return }
             let newText = tv.string
             let selected = tv.selectedRanges
-            if let lang = parent?.language,
-               let attr = highlighter?.highlight(newText, as: lang) {
-                let themed = NSMutableAttributedString(attributedString: attr)
-                let full = NSRange(location: 0, length: themed.length)
-                if let f = parent?.controller.font {
-                    themed.addAttribute(.font, value: f, range: full)
-                }
-                themed.removeAttribute(.backgroundColor, range: full)
+            if let themed = highlight(newText) {
                 tv.textStorage?.setAttributedString(themed)
             }
             tv.selectedRanges = selected
             applyAppearance(tv)
             parent?.text = newText
+        }
+
+        /// Highlight `text` in the file's language and post-process it:
+        ///  - `fastRender: false` uses Apple's HTML parser — the custom fast
+        ///    parser drops attributes from nested spans, which is why strings,
+        ///    quotes and brackets lost their colors.
+        ///  - highlight.js leaves most punctuation at the base foreground, so
+        ///    quotes/brackets get an explicit theme color afterwards.
+        @MainActor private func highlight(_ text: String) -> NSAttributedString? {
+            guard let lang = parent?.language,
+                  let attr = highlighter?.highlight(text, as: lang, fastRender: false)
+            else { return nil }
+            let themed = NSMutableAttributedString(attributedString: attr)
+            let full = NSRange(location: 0, length: themed.length)
+            if let f = parent?.controller.font {
+                themed.addAttribute(.font, value: f, range: full)
+            }
+            themed.removeAttribute(.backgroundColor, range: full)
+
+            // Distinct color for structural characters — cyan from the same
+            // hierarchy palette that tints folders, so it fits every theme.
+            if let punct = parent?.controller.theme.hierarchyColors[1] {
+                let delimiters: Set<Character> = ["\"", "'", "`", "{", "}", "[", "]", "(", ")"]
+                var i = 0
+                for ch in themed.string {
+                    if delimiters.contains(ch) {
+                        themed.addAttribute(.foregroundColor, value: punct,
+                                            range: NSRange(location: i, length: 1))
+                    }
+                    i += 1
+                }
+            }
+            return themed
         }
     }
 }

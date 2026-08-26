@@ -19,6 +19,11 @@ struct MacTermApp: App {
                 commandButton("newTab")
             }
             CommandMenu("Shell") {
+                // Owns ⌘W here — placing it after the system Window menu let
+                // the built-in Close Window shortcut win and minimize/close
+                // the whole window instead of closing the focused pane.
+                commandButton("closePane")
+                Divider()
                 commandButton("nextTab")
                 commandButton("prevTab")
                 Divider()
@@ -31,7 +36,6 @@ struct MacTermApp: App {
                 commandButton("focusRight")
             }
             CommandGroup(after: .windowList) {
-                commandButton("closePane")
                 commandButton("toggleSidebar")
                 commandButton("clearTerminal")
                 Divider()
@@ -46,6 +50,14 @@ struct MacTermApp: App {
             CommandGroup(replacing: .pasteboard) {
                 commandButton("copy")
                 commandButton("paste")
+            }
+            // User-defined combos (Settings → Keys → Custom): hidden items so
+            // their shortcuts fire globally like built-ins.
+            CommandGroup(after: .windowList) {
+                ForEach(controller.customBindings) { b in
+                    Button(controller.title(for: b)) { controller.perform(b.action ?? b.id) }
+                        .keyboardShortcut(controller.keyboardShortcut(for: b.id))
+                }
             }
         }
         .windowStyle(.hiddenTitleBar)

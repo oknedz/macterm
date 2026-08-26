@@ -10,18 +10,20 @@ import AppKit
 /// A user-rebindable keyboard shortcut for an app command.
 struct KeyBinding: Codable, Equatable, Identifiable {
     let id: String
-    /// Single lowercase character (e.g. "t"); "" means unassigned.
+    /// Single character, symbol, digit or " " (space / nvim leader).
     var key: String
     /// SwiftUI `EventModifiers` raw value.
     var modifiers: Int
+    /// For user-defined bindings: the built-in command id they trigger.
+    var action: String? = nil
 
-    init(id: String, key: String, modifiers: Int) {
+    init(id: String, key: String, modifiers: Int, action: String? = nil) {
         self.id = id
         self.key = key
         self.modifiers = modifiers
+        self.action = action
     }
 }
-
 /// One rebindable app command. The catalog below is the SINGLE source of
 /// truth: it feeds the default keybindings, the Shortcuts settings pane and
 /// the menu bar, so all three always agree.
@@ -260,30 +262,30 @@ final class TerminalController: ObservableObject {
     /// Every app command, grouped NvChad-style. Defaults blend macOS idioms
     /// with the neovim mappings they mirror (`lua/nvchad/mappings.lua`).
     static let commandCatalog: [CommandSpec] = [
-        // Tabs (nvim tabufline)
-        CommandSpec(id: "newTab",       group: "Tabs",   title: "New Tab",            nvim: "<leader>b / :enew", key: "t", mods: .command),
-        CommandSpec(id: "nextTab",      group: "Tabs",   title: "Next Tab",           nvim: "<Tab>     buf next", key: "]", mods: [.command, .shift]),
-        CommandSpec(id: "prevTab",      group: "Tabs",   title: "Previous Tab",       nvim: "<S-Tab>   buf prev", key: "[", mods: [.command, .shift]),
-        CommandSpec(id: "closePane",    group: "Tabs",   title: "Close Pane / Tab",   nvim: "<leader>x buf close", key: "w", mods: .command),
+        CommandSpec(id: "newTab",       group: "Tabs",   title: "New Tab",            nvim: "<leader>b   :enew", key: "t", mods: .command),
+        CommandSpec(id: "nextTab",      group: "Tabs",   title: "Next Tab",           nvim: "<leader>bn buf next", key: "]", mods: [.command, .shift]),
+        CommandSpec(id: "prevTab",      group: "Tabs",   title: "Previous Tab",       nvim: "<leader>bp buf prev", key: "[", mods: [.command, .shift]),
+        CommandSpec(id: "closePane",    group: "Tabs",   title: "Close Pane / Tab",   nvim: "<leader>x  buf close", key: "w", mods: .command),
 
-        // Panes (nvim <C-w> window family)
-        CommandSpec(id: "splitRight",   group: "Panes",  title: "Split Right",        nvim: "<C-w>v", key: "d", mods: .command),
-        CommandSpec(id: "splitDown",    group: "Panes",  title: "Split Down",         nvim: "<C-w>s", key: "d", mods: [.command, .shift]),
-        CommandSpec(id: "focusLeft",    group: "Panes",  title: "Focus Pane Left",    nvim: "<C-w>h", key: "h", mods: [.control, .option]),
-        CommandSpec(id: "focusDown",    group: "Panes",  title: "Focus Pane Below",   nvim: "<C-w>j", key: "j", mods: [.control, .option]),
-        CommandSpec(id: "focusUp",      group: "Panes",  title: "Focus Pane Above",   nvim: "<C-w>k", key: "k", mods: [.control, .option]),
-        CommandSpec(id: "focusRight",   group: "Panes",  title: "Focus Pane Right",   nvim: "<C-w>l", key: "l", mods: [.control, .option]),
+        // Panes — <C-w> family; navigation mirrors <leader>sv/<leader>sh +
+        // the <C-h/j/k/l> window-navigation group (⌥⌘ on macOS).
+        CommandSpec(id: "splitRight",   group: "Panes",  title: "Split Right",        nvim: "<leader>sv vertical", key: "d", mods: .command),
+        CommandSpec(id: "splitDown",    group: "Panes",  title: "Split Down",         nvim: "<leader>sh horizontal", key: "d", mods: [.command, .shift]),
+        CommandSpec(id: "focusLeft",    group: "Panes",  title: "Focus Pane Left",    nvim: "<C-h>", key: "h", mods: [.command, .option]),
+        CommandSpec(id: "focusDown",    group: "Panes",  title: "Focus Pane Below",   nvim: "<C-j>", key: "j", mods: [.command, .option]),
+        CommandSpec(id: "focusUp",      group: "Panes",  title: "Focus Pane Above",   nvim: "<C-k>", key: "k", mods: [.command, .option]),
+        CommandSpec(id: "focusRight",   group: "Panes",  title: "Focus Pane Right",   nvim: "<C-l>", key: "l", mods: [.command, .option]),
 
         // View / UI
-        CommandSpec(id: "toggleSidebar",group: "View",   title: "Toggle Sidebar",     nvim: "<C-n>   NvimTreeToggle", key: "s", mods: [.command, .shift]),
-        CommandSpec(id: "clearTerminal",group: "View",   title: "Clear Terminal",     nvim: "<C-l>   clear", key: "k", mods: .command),
+        CommandSpec(id: "toggleSidebar",group: "View",   title: "Toggle Sidebar",     nvim: "<leader>e NvimTreeToggle", key: "s", mods: [.command, .shift]),
+        CommandSpec(id: "clearTerminal",group: "View",   title: "Clear Terminal",     nvim: "<C-l>     clear", key: "k", mods: .command),
         CommandSpec(id: "fontBigger",   group: "View",   title: "Font Size Up",       nvim: "", key: "=", mods: .command),
         CommandSpec(id: "fontSmaller",  group: "View",   title: "Font Size Down",     nvim: "", key: "-", mods: .command),
         CommandSpec(id: "fontReset",    group: "View",   title: "Reset Font Size",    nvim: "", key: "0", mods: .command),
 
         // Edit
-        CommandSpec(id: "copy",         group: "Edit",   title: "Copy",               nvim: "<C-c>   %y+", key: "c", mods: .command),
-        CommandSpec(id: "paste",        group: "Edit",   title: "Paste",              nvim: "p       \"+p", key: "v", mods: .command),
+        CommandSpec(id: "copy",         group: "Edit",   title: "Copy",               nvim: "<C-c> %y+", key: "c", mods: .command),
+        CommandSpec(id: "paste",        group: "Edit",   title: "Paste",              nvim: "p     \"+p", key: "v", mods: .command),
 
         // Go to tab ({n}gt)
     ] + (1...9).map { n in
@@ -514,6 +516,13 @@ final class TerminalController: ObservableObject {
         }
     }
 
+    /// Open a file from the sidebar — ALWAYS inside the app (user request:
+    /// never hand files off to external applications). Text/code files get
+    /// themed syntax highlighting; unknown extensions open as plain text.
+    func openFile(_ url: URL) {
+        openInEditor(url)
+    }
+
     private func removeSessions(_ ids: [UUID]) {
         for id in ids {
             sessions.removeAll { $0.id == id }
@@ -559,30 +568,6 @@ final class TerminalController: ObservableObject {
         let q = "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
         send(to: id, "cd \(q)\n")
     }
-    /// Open a file from the sidebar. Text/source files open in macterm's built-in
-    /// editor (a new tab). Non-text files (images, PDFs, binaries, …) open in their
-    /// system default app instead — never forced through a terminal editor.
-    func openFile(_ url: URL) {
-        if Self.isEditable(url) {
-            openInEditor(url)
-        } else {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    /// Files we can reasonably edit in the built-in text editor (text/code).
-    private static let editableExtensions: Set<String> = [
-        "txt","text","md","markdown","mkd","swift","py","pyw","js","mjs","cjs","ts","tsx","jsx",
-        "json","yaml","yml","toml","ini","cfg","conf","editorconfig","gitignore","gitattributes",
-        "sh","zsh","bash","fish","c","h","cc","cpp","cxx","hpp","hxx","m","mm","java","kt","kts",
-        "go","rs","rb","php","pl","pm","lua","sql","html","htm","xhtml","css","scss","sass","less",
-        "xml","svg","csv","tsv","log","env","properties","gradle","plist","strings","r","dart",
-        "vue","svelte","tf","tfvars","lock","diff","patch","rst","adoc","asciidoc","tex"
-    ]
-
-    private static func isEditable(_ url: URL) -> Bool {
-        editableExtensions.contains(url.pathExtension.lowercased())
-    }
 
     /// Open a file in macterm's built-in editor: create an editor session and a new
     /// tab hosting it. The file text is loaded lazily by `EditorView`.
@@ -605,18 +590,51 @@ final class TerminalController: ObservableObject {
         views[id]?.clearScrollback()
     }
     /// Build the SwiftUI `KeyboardShortcut` for a command id, or `nil` if
-    /// unassigned. Used by the app's `.commands` so shortcuts honor user rebinds.
+    /// unassigned. Space (" ") maps to SwiftUI's `.space` key (nvim leader).
     func keyboardShortcut(for id: String) -> KeyboardShortcut? {
         guard let b = keyBindings.first(where: { $0.id == id }), !b.key.isEmpty else { return nil }
-        return KeyboardShortcut(KeyEquivalent(Character(b.key)),
-                               modifiers: EventModifiers(rawValue: b.modifiers))
+        let key: KeyEquivalent = b.key == " " ? .space : KeyEquivalent(Character(b.key))
+        return KeyboardShortcut(key, modifiers: EventModifiers(rawValue: b.modifiers))
+    }
+
+    // MARK: - User-defined keybindings
+
+    /// Extra combos the user added in Settings → Keys, each triggering a
+    /// built-in command. Dispatched from the menu bar like built-ins.
+    var customBindings: [KeyBinding] {
+        keyBindings.filter { $0.id.hasPrefix("custom.") }
+    }
+
+    func addCustomBinding(action commandId: String, key: String, modifiers: Int) {
+        keyBindings.append(KeyBinding(id: "custom.\(UUID().uuidString)",
+                                      key: key, modifiers: modifiers, action: commandId))
+    }
+
+    func removeCustomBinding(_ id: String) {
+        keyBindings.removeAll { $0.id == id }
+    }
+
+    /// Display title for any binding — built-in or user-defined.
+    func title(for binding: KeyBinding) -> String {
+        let actionId = binding.action ?? binding.id
+        return TerminalController.commandCatalog.first { $0.id == actionId }?.title ?? actionId
+    }
+
+    /// True when two non-empty bindings share the same combo.
+    func isConflicting(_ b: KeyBinding) -> Bool {
+        guard !b.key.isEmpty else { return false }
+        return keyBindings.contains {
+            $0.id != b.id && !$0.key.isEmpty
+                && $0.key == b.key && $0.modifiers == b.modifiers
+        }
     }
 
     /// Reset the keyboard shortcuts to their defaults.
     func resetKeyBindings() {
-        keyBindings = TerminalController.defaultKeyBindings()
+        // Keep the user's own custom bindings across a reset of built-ins.
+        let customs = customBindings
+        keyBindings = TerminalController.defaultKeyBindings() + customs
     }
-
     // MARK: - Command dispatch (menu bar + keyboard shortcuts)
 
     /// Execute a catalog command by id. The `.commands` menu and every

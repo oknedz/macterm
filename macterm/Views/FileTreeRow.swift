@@ -88,7 +88,7 @@ private struct FileRow: View {
 /// Map a file extension to an SF Symbol glyph plus a slot into the active
 /// theme's hierarchy palette (nil = neutral secondary tint). Glyphs keep
 /// their editor-style shapes; ALL colors now come from the theme.
-private func iconName(for url: URL) -> String {
+func iconName(for url: URL) -> String {
     switch url.pathExtension.lowercased() {
     case "swift":                       return "swift"
     case "xcodeproj", "xcworkspace", "swiftpm", "xcframework": return "hammer"
@@ -118,7 +118,7 @@ private func iconName(for url: URL) -> String {
 
 /// Slot into `AppTheme.hierarchyColors` (0=blue 1=cyan 2=green 3=yellow
 /// 4=magenta 5=red) — nil renders as neutral secondary text.
-private func fileSlot(for url: URL) -> Int? {
+func fileSlot(for url: URL) -> Int? {
     switch url.pathExtension.lowercased() {
     // Code — blue
     case "swift", "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "rb", "php",
