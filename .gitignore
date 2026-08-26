@@ -17,3 +17,6 @@ DerivedData/
 .idea/
 .vscode/
 *.swp
+
+# Generated code-graph output
+graphify-out/

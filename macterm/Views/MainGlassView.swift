@@ -42,13 +42,13 @@ struct MainGlassView: View {
             // (Removed .edgesIgnoringSafeArea from here)
             TitleBar()
             
-            HStack(spacing: GlassMetrics.gap) {
-                if !controller.sidebarCollapsed {
-                    Sidebar()
-                        .frame(width: controller.sidebarWidth)
-                        .glassPanel()
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                }
+            HStack(spacing: 0) {
+                Sidebar()
+                    .frame(width: controller.sidebarCollapsed ? 0 : controller.sidebarWidth)
+                    .opacity(controller.sidebarCollapsed ? 0 : 1)
+                    .glassPanel()
+                    .clipped()
+                    .padding(.trailing, controller.sidebarCollapsed ? 0 : GlassMetrics.gap)
                 TerminalArea()
                     .glassPanel()
             }

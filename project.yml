@@ -7,6 +7,9 @@ options:
 packages:
   SwiftTerm:
     path: SwiftTermVendor
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    branch: master
 targets:
   macterm:
     type: application
@@ -18,6 +21,8 @@ targets:
     dependencies:
       - package: SwiftTerm
         product: SwiftTerm
+      - package: Highlightr
+        product: Highlightr
     settings:
         PRODUCT_BUNDLE_IDENTIFIER: com.zdenko.macterm
         ENABLE_HARDENED_RUNTIME: false

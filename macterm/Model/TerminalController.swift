@@ -86,6 +86,15 @@ struct WorkspaceTab: Identifiable {
     var color: NSColor? = nil
 }
 
+/// In-memory text buffer backing an in-app editor session. Stored in
+/// `TerminalController.editorBuffers` keyed by `Session.id` so each editor tab
+/// owns its content (and unsaved edits) independently of the mounted view —
+/// fixes the bug where switching tabs reused one view's `@State`.
+struct EditorBuffer {
+    var content: String
+    var original: String
+}
+
 @MainActor
 final class TerminalController: ObservableObject {
 
@@ -96,6 +105,10 @@ final class TerminalController: ObservableObject {
     @Published var activeTabId: UUID = UUID()
     @Published var focusedSessionId: UUID = UUID()
     @Published var sidebarCollapsed: Bool = false { didSet { persist() } }
+
+    /// Per-editor-session text buffers, keyed by `Session.id`. Lives in the
+    /// model (not the view) so switching tabs preserves each file's content.
+    @Published var editorBuffers: [UUID: EditorBuffer] = [:]
 
     // MARK: - Appearance
     /// Active base theme name (bg/fg/caret/selection + ANSI palette derive from it,
@@ -547,7 +560,16 @@ final class TerminalController: ObservableObject {
         for id in ids {
             sessions.removeAll { $0.id == id }
             views[id] = nil
+            editorBuffers[id] = nil
         }
+    }
+
+    /// Two-way binding to an editor session's text buffer.
+    func editorBufferBinding(for id: UUID) -> Binding<EditorBuffer> {
+        Binding(
+            get: { self.editorBuffers[id] ?? EditorBuffer(content: "", original: "") },
+            set: { self.editorBuffers[id] = $0 }
+        )
     }
 
     /// Split the focused pane: replace it with a split holding a fresh
@@ -578,6 +600,45 @@ final class TerminalController: ObservableObject {
         let id = focusedSessionId
         let q = "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
         send(to: id, "cd \(q)\n")
+    }
+    /// Open a file from the sidebar. Text/source files open in macterm's built-in
+    /// editor (a new tab). Non-text files (images, PDFs, binaries, …) open in their
+    /// system default app instead — never forced through a terminal editor.
+    func openFile(_ url: URL) {
+        if Self.isEditable(url) {
+            openInEditor(url)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Files we can reasonably edit in the built-in text editor (text/code).
+    private static let editableExtensions: Set<String> = [
+        "txt","text","md","markdown","mkd","swift","py","pyw","js","mjs","cjs","ts","tsx","jsx",
+        "json","yaml","yml","toml","ini","cfg","conf","editorconfig","gitignore","gitattributes",
+        "sh","zsh","bash","fish","c","h","cc","cpp","cxx","hpp","hxx","m","mm","java","kt","kts",
+        "go","rs","rb","php","pl","pm","lua","sql","html","htm","xhtml","css","scss","sass","less",
+        "xml","svg","csv","tsv","log","env","properties","gradle","plist","strings","r","dart",
+        "vue","svelte","tf","tfvars","lock","diff","patch","rst","adoc","asciidoc","tex"
+    ]
+
+    private static func isEditable(_ url: URL) -> Bool {
+        editableExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Open a file in macterm's built-in editor: create an editor session and a new
+    /// tab hosting it. The file text is loaded lazily by `EditorView`.
+    private func openInEditor(_ url: URL) {
+        let title = url.lastPathComponent
+        let session = Session(title: title, cwd: url.deletingLastPathComponent().path,
+                              profile: "Local", kind: .editor(fileURL: url))
+        let loaded = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        editorBuffers[session.id] = EditorBuffer(content: loaded, original: loaded)
+        sessions.append(session)
+        let tab = WorkspaceTab(title: title, layout: .terminal(session.id))
+        tabs.append(tab)
+        activeTabId = tab.id
+        focusedSessionId = session.id
     }
 
     func clearActive() {

@@ -14,6 +14,16 @@ struct TerminalArea: View {
     private func render(_ node: PaneNode) -> AnyView {
         switch node {
         case .terminal(let id):
+            guard let session = controller.sessions.first(where: { $0.id == id }) else {
+                return AnyView(EmptyView())
+            }
+            if case .editor(let fileURL) = session.kind {
+                return AnyView(
+                    EditorView(url: fileURL, buffer: controller.editorBufferBinding(for: session.id))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(controller.terminalPadding)
+                )
+            }
             return AnyView(
                 TerminalViewRepresentable(sessionId: id, controller: controller)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

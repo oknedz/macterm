@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		123601A2E8DD757C4559E743 /* Highlightr in Frameworks */ = {isa = PBXBuildFile; productRef = 27C34E4090FB8724F4702E6F /* Highlightr */; };
 		1824852166DA98821FBDD375 /* TerminalArea.swift in Sources */ = {isa = PBXBuildFile; fileRef = 720698C4E04DB36DBB67C6AA /* TerminalArea.swift */; };
 		344F581AD9270985CEB04E51 /* Sidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78890FF345A1235ED3D6629 /* Sidebar.swift */; };
 		3650368B3E40CA7A5E49F28D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04B53AB2D28C432D7522C4FC /* SettingsView.swift */; };
@@ -17,6 +18,7 @@
 		A453F4937C118A9D21AC2992 /* TitleBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FFB5DFC145E5A73A83F1C2 /* TitleBar.swift */; };
 		A72F2EF0D6D4C7EFCCA49B6D /* MainGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1349C9C08814B2AD910D161 /* MainGlassView.swift */; };
 		AB177C344228128FCACF307A /* FileTreeRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340C6F83BF80AFD53FE928D9 /* FileTreeRow.swift */; };
+		C3FDBCBDC87D81341353C371 /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CF42E3A1364AA254E2A2F6 /* EditorView.swift */; };
 		C5ED995580F853415E4C9B8E /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A3879147056C3DB2BB608B54 /* SwiftTerm */; };
 		D3A3CC167926368451F7A4FE /* FileNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = D73896232BBEDFBBF73AC613 /* FileNode.swift */; };
 		D83E3DFC9019605CFB130975 /* WindowConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85D4574C7EB5B4E536BDA019 /* WindowConfigurator.swift */; };
@@ -35,6 +37,7 @@
 		99538287FE1C21FC28449238 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
 		A1349C9C08814B2AD910D161 /* MainGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainGlassView.swift; sourceTree = "<group>"; };
 		A78890FF345A1235ED3D6629 /* Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sidebar.swift; sourceTree = "<group>"; };
+		B0CF42E3A1364AA254E2A2F6 /* EditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorView.swift; sourceTree = "<group>"; };
 		B2300DD60BB02906418A4DBD /* macterm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = macterm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C891BDA076057EC503658513 /* TerminalViewRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewRepresentable.swift; sourceTree = "<group>"; };
 		CF167D93E451F821E5AE56FB /* TerminalController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalController.swift; sourceTree = "<group>"; };
@@ -48,6 +51,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C5ED995580F853415E4C9B8E /* SwiftTerm in Frameworks */,
+				123601A2E8DD757C4559E743 /* Highlightr in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -100,6 +104,7 @@
 		64C33A9D64ED71E3F4C750F5 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				B0CF42E3A1364AA254E2A2F6 /* EditorView.swift */,
 				340C6F83BF80AFD53FE928D9 /* FileTreeRow.swift */,
 				A1349C9C08814B2AD910D161 /* MainGlassView.swift */,
 				04B53AB2D28C432D7522C4FC /* SettingsView.swift */,
@@ -149,6 +154,7 @@
 			name = macterm;
 			packageProductDependencies = (
 				A3879147056C3DB2BB608B54 /* SwiftTerm */,
+				27C34E4090FB8724F4702E6F /* Highlightr */,
 			);
 			productName = macterm;
 			productReference = B2300DD60BB02906418A4DBD /* macterm.app */;
@@ -180,6 +186,7 @@
 			mainGroup = D8956E426AE375C3BFF9C7D0;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				8C25F8CEE3ACE1D7050195C6 /* XCRemoteSwiftPackageReference "Highlightr" */,
 				F2329B9224D8BAD33626C9CB /* XCLocalSwiftPackageReference "SwiftTermVendor" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -196,6 +203,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C3FDBCBDC87D81341353C371 /* EditorView.swift in Sources */,
 				D3A3CC167926368451F7A4FE /* FileNode.swift in Sources */,
 				AB177C344228128FCACF307A /* FileTreeRow.swift in Sources */,
 				76AC7752C77920006EFAF638 /* MacTermApp.swift in Sources */,
@@ -402,7 +410,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		8C25F8CEE3ACE1D7050195C6 /* XCRemoteSwiftPackageReference "Highlightr" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/raspu/Highlightr";
+			requirement = {
+				branch = master;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		27C34E4090FB8724F4702E6F /* Highlightr */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8C25F8CEE3ACE1D7050195C6 /* XCRemoteSwiftPackageReference "Highlightr" */;
+			productName = Highlightr;
+		};
 		A3879147056C3DB2BB608B54 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SwiftTerm;

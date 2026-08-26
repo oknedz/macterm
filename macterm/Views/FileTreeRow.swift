@@ -60,6 +60,7 @@ struct FolderRow: View {
 private struct FileRow: View {
     let node: FileNode
     @State private var hover = false
+    @EnvironmentObject private var controller: TerminalController
 
     private var icon: (name: String, color: Color) {
         fileIcon(for: node.url)
@@ -79,6 +80,7 @@ private struct FileRow: View {
         .background(hover ? Color.white.opacity(0.06) : Color.clear)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
+        .onTapGesture(count: 2) { controller.openFile(node.url) }
     }
 }
 
