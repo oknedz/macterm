@@ -31,9 +31,12 @@ struct FolderRow: View {
             .background(rowBackground)
             .contentShape(Rectangle())
             .onTapGesture {
-                // Persisted flip — no local state, so it survives everything.
-                controller.setExpanded(node.url.standardizedFileURL.path, !expanded)
-                if !expanded { node.loadChildren() }
+                // Capture intent BEFORE mutating: the persisted setter flips
+                // the published value synchronously, so reading `expanded`
+                // afterwards would see the new state and skip loading.
+                let willExpand = !expanded
+                controller.setExpanded(node.url.standardizedFileURL.path, willExpand)
+                if willExpand { node.loadChildren() }
             }
             .highPriorityGesture(
                 TapGesture().modifiers(.command).onEnded {
