@@ -48,6 +48,17 @@ struct AppTheme: Identifiable {
         Self.termLuaOrder.map(color)
     }
 
+    /// Six vivid theme colors that cycle through the file-tree hierarchy:
+    /// blue → cyan → green → yellow → magenta → red (term.lua ANSI slots),
+    /// so folders/subfolders/files stay readable in EVERY theme.
+    var hierarchyColors: [NSColor] {
+        [4, 6, 2, 3, 5, 1].map { color(Self.termLuaOrder[$0]) }
+    }
+    /// Tint for a tree level (favorites root = 0).
+    func hierarchyColor(level: Int) -> NSColor {
+        hierarchyColors[abs(level) % hierarchyColors.count]
+    }
+
     // MARK: - Catalog
 
     static let all: [AppTheme] = NvChadThemes.raw.map {

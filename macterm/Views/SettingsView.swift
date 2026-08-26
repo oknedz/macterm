@@ -15,8 +15,10 @@ struct SettingsRoot: View {
                         .tag(section)
                 }
             }
-            .navigationTitle("Settings")
-            .navigationSplitViewColumnWidth(200)
+            // Fixed-width category list, no collapsible-sidebar chrome —
+            // its toggle icon used to collide with the traffic lights.
+            .toolbar(removing: .sidebarToggle)
+            .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 230)
         } detail: {
             Group {
                 switch selection {
@@ -24,15 +26,16 @@ struct SettingsRoot: View {
                 case .appearance: AppearancePane()
                 case .text:       TextPane()
                 case .terminal:   TerminalPane()
+                case .keys:       ShortcutsPane()
                 case .window:     WindowPane()
-                case .shortcuts:  ShortcutsPane()
                 }
             }
             .navigationTitle(selection.title)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .navigationSplitViewStyle(.automatic)
-        .frame(minWidth: 780, minHeight: 560)
+        .navigationSplitViewStyle(.balanced)
+        // Roomy on purpose: the Keys pane lists every command grouped.
+        .frame(minWidth: 940, minHeight: 640)
         .background(VisualEffectView(material: .windowBackground, blendingMode: .withinWindow))
         // The Settings window follows the app theme too (dark/light materials + controls).
         .preferredColorScheme(controller.theme.isDark ? .dark : .light)
@@ -40,7 +43,7 @@ struct SettingsRoot: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, appearance, text, terminal, window, shortcuts
+    case general, appearance, text, terminal, keys, window
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -48,8 +51,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .appearance: "Theme"
         case .text:       "Text"
         case .terminal:   "Terminal"
-            case .window:     "Window"
-            case .shortcuts:  "Shortcuts"
+        case .keys:       "Keys"
+        case .window:     "Window"
         }
     }
     var icon: String {
@@ -58,8 +61,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .appearance: "paintbrush"
         case .text:       "textformat"
         case .terminal:   "terminal"
-            case .window:     "macwindow"
-            case .shortcuts:  "command"
+        case .keys:       "keyboard"
+        case .window:     "macwindow"
         }
     }
 }
@@ -81,6 +84,13 @@ private struct GeneralPane: View {
                 }
                 .pickerStyle(.segmented)
                 Toggle("Close tab when the shell exits", isOn: $controller.closeOnExit)
+            }
+            Section("Reset") {
+                Button("Restore All Defaults", role: .destructive) {
+                    controller.resetAllSettings()
+                }
+                Text("Restores every setting — theme, text, terminal, keys, window.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -303,16 +313,9 @@ private struct WindowPane: View {
                 }
                 Text("Space around the terminal that reveals the window vibrancy.")
                     .font(.caption).foregroundStyle(.secondary)
-                Slider(value: $controller.terminalTransparency, in: 0...0.9, step: 0.05) {
-                    Text("Terminal transparency")
-                }
-                Text("Higher = more frosted glass; lower = more solid.")
+                // Frosted-glass strength lives in Theme → Opacity (single control).
+                Text("Glass transparency is set in Theme → Opacity.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                Button("Restore All Defaults", role: .destructive) {
-                    controller.resetAllSettings()
-                }
             }
         }
         .formStyle(.grouped)
@@ -321,59 +324,134 @@ private struct WindowPane: View {
 }
 
 
-// MARK: - Shortcuts
+// MARK: - Keys
+
+/// Every app command, NvChad-grouped and filterable by name, group or nvim
+/// mapping. Each row rebinds live and can be reset to its catalog default.
 private struct ShortcutsPane: View {
     @EnvironmentObject private var controller: TerminalController
+    @State private var search = ""
 
-    private let commands: [(id: String, label: String)] = [
-        ("newTab", "New Tab"),
-        ("closeTab", "Close Tab"),
-        ("toggleSidebar", "Toggle Sidebar"),
-        ("clear", "Clear"),
-    ]
+    /// Commands whose combo is claimed by another command too.
+    private var conflictingIDs: Set<String> {
+        var counts: [String: Int] = [:]
+        for b in controller.keyBindings where !b.key.isEmpty {
+            counts[b.key + "|\(b.modifiers)", default: 0] += 1
+        }
+        return Set(controller.keyBindings.compactMap { b in
+            !b.key.isEmpty && counts[b.key + "|\(b.modifiers)", default: 0] > 1 ? b.id : nil
+        })
+    }
+
+    private func matches(_ cmd: CommandSpec) -> Bool {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return true }
+        return cmd.title.lowercased().contains(q)
+            || cmd.group.lowercased().contains(q)
+            || cmd.nvim.lowercased().contains(q)
+    }
 
     var body: some View {
         Form {
-            Section("Application Shortcuts") {
-                ForEach(commands, id: \.id) { cmd in
-                    if let index = controller.keyBindings.firstIndex(where: { $0.id == cmd.id }) {
-                        ShortcutCaptureRow(label: cmd.label,
-                                           binding: $controller.keyBindings[index])
+            Section("Search") {
+                TextField("Filter \(TerminalController.commandCatalog.count) commands — name, group or nvim mapping…",
+                          text: $search)
+                    .textFieldStyle(.roundedBorder)
+                Text("Click a key cell, press the new combination; Esc cancels. Duplicates are flagged.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(TerminalController.commandGroups, id: \.group) { g in
+                let cmds = g.commands.filter(matches)
+                if !cmds.isEmpty {
+                    Section(g.group) {
+                        ForEach(cmds) { cmd in
+                            if let i = controller.keyBindings.firstIndex(where: { $0.id == cmd.id }) {
+                                ShortcutRow(spec: cmd,
+                                            conflicting: conflictingIDs.contains(cmd.id),
+                                            binding: $controller.keyBindings[i])
+                            }
+                        }
                     }
                 }
             }
-            Section {
-                Button("Reset Shortcuts") { controller.resetKeyBindings() }
+            if filteredGroupsEmpty {
+                Section {
+                    Text("No command matches “\(search)”.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section("Reset") {
+                Button("Reset All Shortcuts") { controller.resetKeyBindings() }
                     .controlSize(.small)
             }
         }
         .formStyle(.grouped)
         .padding(20)
     }
+
+    private var filteredGroupsEmpty: Bool {
+        TerminalController.commandGroups.allSatisfy { g in
+            g.commands.filter(matches).isEmpty
+        }
+    }
 }
 
-/// A labeled row that captures the next key combination and writes it to the
-/// bound `KeyBinding`. Click to arm; press a combo, or Esc to cancel.
-private struct ShortcutCaptureRow: View {
-    let label: String
+/// One command row: title + the neovim mapping it mirrors, a capture cell,
+/// duplicate warning, and a one-click reset to the catalog default.
+private struct ShortcutRow: View {
+    let spec: CommandSpec
+    let conflicting: Bool
     @Binding var binding: KeyBinding
-    @State private var listening = false
-    @State private var monitor: Any?
-    @State private var display = ""
 
     var body: some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Button(action: toggleListening) {
-                Text(listening ? "Press shortcut…" : display)
-                    .frame(minWidth: 96)
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(spec.title)
+                Text(spec.nvim.isEmpty ? "—" : spec.nvim)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.bordered)
-            .help("Click, then press the desired key combination (Esc cancels)")
+            Spacer(minLength: 8)
+            if conflicting {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .help("Another command uses this combination")
+            }
+            ShortcutCaptureField(binding: $binding, conflicting: conflicting)
+            Button {
+                binding = TerminalController.defaultBinding(for: spec.id)
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .help("Reset to default")
         }
-        .onAppear { display = Self.describe(binding) }
-        .onChange(of: binding) { _, newValue in display = Self.describe(newValue) }
+        .padding(.vertical, 1)
+    }
+}
+
+/// Click-to-arm key capture cell. Accepts any printable character with any
+/// modifier combination; Esc cancels without changing the binding.
+private struct ShortcutCaptureField: View {
+    @Binding var binding: KeyBinding
+    let conflicting: Bool
+    @State private var listening = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        Button(action: toggleListening) {
+            Text(listening ? "Press shortcut…" : Self.describe(binding))
+                .font(.system(.body, design: .monospaced))
+                .frame(minWidth: 110)
+                .padding(.vertical, 2)
+        }
+        .buttonStyle(.bordered)
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(conflicting && !listening ? Color.orange : Color.clear, lineWidth: 1)
+        )
+        .help("Click, then press the desired key combination (Esc cancels)")
         .onDisappear { stopListening() }
     }
 
@@ -384,15 +462,14 @@ private struct ShortcutCaptureRow: View {
     private func startListening() {
         listening = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 { self.stopListening(); return nil }      // Esc cancels
-            guard let chars = event.charactersIgnoringModifiers,
-                  let first = chars.lowercased().first,
-                  first.isLetter || first.isNumber else { return event }    // ignore modifier-only
-            var b = self.binding
-            b.key = String(first)
+            if event.keyCode == 53 { self.stopListening(); return nil }   // Esc cancels
+            // Ignore pure-modifier presses; accept any printable character.
+            guard let chars = event.charactersIgnoringModifiers?.trimmingCharacters(in: .whitespaces),
+                  let first = chars.first, !first.isWhitespace else { return event }
+            var b = binding
+            b.key = String(first).lowercased()
             b.modifiers = Int(Self.eventModifiers(event).rawValue)
-            self.binding = b
-            self.display = Self.describe(b)
+            binding = b
             self.stopListening()
             return nil
         }
@@ -413,14 +490,15 @@ private struct ShortcutCaptureRow: View {
         return m
     }
 
-    private static func describe(_ b: KeyBinding) -> String {
+    static func describe(_ b: KeyBinding) -> String {
         guard !b.key.isEmpty else { return "Unassigned" }
-        var s = ""
         let m = EventModifiers(rawValue: b.modifiers)
+        var s = ""
         if m.contains(.command) { s += "⌘" }
         if m.contains(.shift)   { s += "⇧" }
         if m.contains(.option)  { s += "⌥" }
         if m.contains(.control) { s += "⌃" }
-        return s + b.key.uppercased()
+        let k = b.key
+        return s + (k.count == 1 && k.first!.isLetter ? k.uppercased() : k)
     }
 }

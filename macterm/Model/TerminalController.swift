@@ -22,6 +22,19 @@ struct KeyBinding: Codable, Equatable, Identifiable {
     }
 }
 
+/// One rebindable app command. The catalog below is the SINGLE source of
+/// truth: it feeds the default keybindings, the Shortcuts settings pane and
+/// the menu bar, so all three always agree.
+struct CommandSpec: Identifiable {
+    let id: String
+    let group: String
+    let title: String
+    /// The NvChad/neovim mapping this command mirrors (shown as a caption).
+    let nvim: String
+    let key: String
+    let mods: EventModifiers
+}
+
 // MARK: - Split layout (tabs hold recursive split trees, iTerm-style)
 enum SplitDirection: String, Codable {
     case vertical   // side-by-side (HSplitView)
@@ -244,9 +257,60 @@ final class TerminalController: ObservableObject {
         // No hard-coded project paths: new tabs open in the user's home.
         FileManager.default.homeDirectoryForCurrentUser.path
     }
+    /// Every app command, grouped NvChad-style. Defaults blend macOS idioms
+    /// with the neovim mappings they mirror (`lua/nvchad/mappings.lua`).
+    static let commandCatalog: [CommandSpec] = [
+        // Tabs (nvim tabufline)
+        CommandSpec(id: "newTab",       group: "Tabs",   title: "New Tab",            nvim: "<leader>b / :enew", key: "t", mods: .command),
+        CommandSpec(id: "nextTab",      group: "Tabs",   title: "Next Tab",           nvim: "<Tab>     buf next", key: "]", mods: [.command, .shift]),
+        CommandSpec(id: "prevTab",      group: "Tabs",   title: "Previous Tab",       nvim: "<S-Tab>   buf prev", key: "[", mods: [.command, .shift]),
+        CommandSpec(id: "closePane",    group: "Tabs",   title: "Close Pane / Tab",   nvim: "<leader>x buf close", key: "w", mods: .command),
 
+        // Panes (nvim <C-w> window family)
+        CommandSpec(id: "splitRight",   group: "Panes",  title: "Split Right",        nvim: "<C-w>v", key: "d", mods: .command),
+        CommandSpec(id: "splitDown",    group: "Panes",  title: "Split Down",         nvim: "<C-w>s", key: "d", mods: [.command, .shift]),
+        CommandSpec(id: "focusLeft",    group: "Panes",  title: "Focus Pane Left",    nvim: "<C-w>h", key: "h", mods: [.control, .option]),
+        CommandSpec(id: "focusDown",    group: "Panes",  title: "Focus Pane Below",   nvim: "<C-w>j", key: "j", mods: [.control, .option]),
+        CommandSpec(id: "focusUp",      group: "Panes",  title: "Focus Pane Above",   nvim: "<C-w>k", key: "k", mods: [.control, .option]),
+        CommandSpec(id: "focusRight",   group: "Panes",  title: "Focus Pane Right",   nvim: "<C-w>l", key: "l", mods: [.control, .option]),
 
-    // MARK: - Init / persistence
+        // View / UI
+        CommandSpec(id: "toggleSidebar",group: "View",   title: "Toggle Sidebar",     nvim: "<C-n>   NvimTreeToggle", key: "s", mods: [.command, .shift]),
+        CommandSpec(id: "clearTerminal",group: "View",   title: "Clear Terminal",     nvim: "<C-l>   clear", key: "k", mods: .command),
+        CommandSpec(id: "fontBigger",   group: "View",   title: "Font Size Up",       nvim: "", key: "=", mods: .command),
+        CommandSpec(id: "fontSmaller",  group: "View",   title: "Font Size Down",     nvim: "", key: "-", mods: .command),
+        CommandSpec(id: "fontReset",    group: "View",   title: "Reset Font Size",    nvim: "", key: "0", mods: .command),
+
+        // Edit
+        CommandSpec(id: "copy",         group: "Edit",   title: "Copy",               nvim: "<C-c>   %y+", key: "c", mods: .command),
+        CommandSpec(id: "paste",        group: "Edit",   title: "Paste",              nvim: "p       \"+p", key: "v", mods: .command),
+
+        // Go to tab ({n}gt)
+    ] + (1...9).map { n in
+        CommandSpec(id: "goToTab.\(n)", group: "Go to Tab",
+                    title: "Go to Tab \(n)", nvim: "\(n)gt",
+                    key: "\(n)", mods: .command)
+    }
+
+    /// Groups in stable display order.
+    static let commandGroups: [(group: String, commands: [CommandSpec])] = {
+        var order: [String] = []
+        var byGroup: [String: [CommandSpec]] = [:]
+        for c in commandCatalog {
+            if byGroup[c.group] == nil { order.append(c.group) }
+            byGroup[c.group, default: []].append(c)
+        }
+        return order.map { ($0, byGroup[$0]!) }
+    }()
+
+    static func defaultKeyBindings() -> [KeyBinding] {
+        commandCatalog.map { KeyBinding(id: $0.id, key: $0.key, modifiers: Int($0.mods.rawValue)) }
+    }
+    /// The catalog default for one command (used by per-row reset).
+    static func defaultBinding(for id: String) -> KeyBinding {
+        let s = commandCatalog.first { $0.id == id }!
+        return KeyBinding(id: s.id, key: s.key, modifiers: Int(s.mods.rawValue))
+    }
     init() {
         restore()
         let first = Session(title: "zsh", cwd: startupDirectory, profile: "Local")
@@ -255,14 +319,6 @@ final class TerminalController: ObservableObject {
         tabs = [tab]
         activeTabId = tab.id
         focusedSessionId = first.id
-    }
-    static func defaultKeyBindings() -> [KeyBinding] {
-        [
-            KeyBinding(id: "newTab",       key: "t", modifiers: Int(EventModifiers.command.rawValue)),
-            KeyBinding(id: "closeTab",      key: "w", modifiers: Int(EventModifiers.command.rawValue)),
-            KeyBinding(id: "toggleSidebar", key: "s", modifiers: Int(EventModifiers([.command, .shift]).rawValue)),
-            KeyBinding(id: "clear",         key: "k", modifiers: Int(EventModifiers.command.rawValue)),
-        ]
     }
 
 
@@ -290,7 +346,12 @@ final class TerminalController: ObservableObject {
         terminalPadding        = d.object(forKey: "terminalPadding2") as? Double ?? terminalPadding
         if let data = d.data(forKey: "keyBindings"),
            let dec = try? JSONDecoder().decode([KeyBinding].self, from: data), !dec.isEmpty {
-            keyBindings = dec
+            // Merge: keep the user's saved bindings, add defaults for catalog
+            // entries that didn't exist when they were saved.
+            let have = Set(dec.map(\.id))
+            keyBindings = dec + Self.commandCatalog
+                .filter { !have.contains($0.id) }
+                .map { KeyBinding(id: $0.id, key: $0.key, modifiers: Int($0.mods.rawValue)) }
         } else {
             keyBindings = TerminalController.defaultKeyBindings()
         }
@@ -554,6 +615,107 @@ final class TerminalController: ObservableObject {
     /// Reset the keyboard shortcuts to their defaults.
     func resetKeyBindings() {
         keyBindings = TerminalController.defaultKeyBindings()
+    }
+
+    // MARK: - Command dispatch (menu bar + keyboard shortcuts)
+
+    /// Execute a catalog command by id. The `.commands` menu and every
+    /// rebindable shortcut funnel through here so behavior lives in one place.
+    func perform(_ id: String) {
+        switch id {
+        case "newTab":        newTab()
+        case "closePane":     closeActive()
+        case "nextTab":       cycleTab(1)
+        case "prevTab":       cycleTab(-1)
+        case "toggleSidebar": toggleSidebar()
+        case "clearTerminal": clearActive()
+        case "splitRight":    splitFocused(vertical: true)
+        case "splitDown":     splitFocused(vertical: false)
+        case "focusLeft":     focusNeighbor(.left)
+        case "focusRight":    focusNeighbor(.right)
+        case "focusUp":       focusNeighbor(.up)
+        case "focusDown":     focusNeighbor(.down)
+        case "fontBigger":    fontSize = min(fontSize + 1, 24)
+        case "fontSmaller":   fontSize = max(fontSize - 1, 8)
+        case "fontReset":     fontSize = 13
+        case "copy":          NSApp.sendAction(Selector(("copy:")), to: nil, from: nil)
+        case "paste":         NSApp.sendAction(Selector(("paste:")), to: nil, from: nil)
+        default:
+            if id.hasPrefix("goToTab."), let n = Int(id.dropFirst("goToTab.".count)) {
+                goToTab(n)
+            }
+        }
+    }
+
+    private func cycleTab(_ step: Int) {
+        guard let i = tabs.firstIndex(where: { $0.id == activeTabId }), !tabs.isEmpty else { return }
+        let next = tabs[(i + step + tabs.count) % tabs.count]
+        activate(next)
+    }
+
+    private func goToTab(_ n: Int) {
+        guard tabs.indices.contains(n - 1) else { return }
+        activate(tabs[n - 1])
+    }
+
+    private func activate(_ tab: WorkspaceTab) {
+        activeTabId = tab.id
+        focusedSessionId = tab.layout.firstLeaf ?? focusedSessionId
+    }
+
+    enum FocusDirection { case left, right, up, down }
+
+    /// Move focus across the split tree like nvim's `<C-w>h/j/k/l`: cross the
+    /// deepest split that separates the focused pane from the target side,
+    /// then land on the sibling leaf nearest the shared edge.
+    func focusNeighbor(_ dir: FocusDirection) {
+        guard let tab = tabs.first(where: { $0.id == activeTabId }) else { return }
+        // Path of (split node, entered child a?) from root down to the leaf.
+        func walk(_ node: PaneNode, _ acc: [(PaneNode, Bool)]) -> [(PaneNode, Bool)]? {
+            switch node {
+            case .terminal(let s):
+                return s == focusedSessionId ? acc : nil
+            case .split(_, _, let a, let b):
+                if let p = walk(a, acc + [(node, true)]) { return p }
+                return walk(b, acc + [(node, false)])
+            }
+        }
+        guard let path = walk(tab.layout, []) else { return }
+
+        // vertical = side-by-side (separates left/right); horizontal = stacked.
+        func separates(_ d: SplitDirection) -> Bool {
+            switch (d, dir) {
+            case (.vertical, .left), (.vertical, .right),
+                 (.horizontal, .up), (.horizontal, .down):
+                return true
+            default:
+                return false
+            }
+        }
+        // Deepest ancestor whose split can move us toward `dir`.
+        for (split, enteredA) in path.reversed() {
+            guard case .split(_, let d, let a, let b) = split, separates(d) else { continue }
+            let back = (dir == .left || dir == .up)
+            if enteredA && !back { focusExtreme(b, toward: dir); return }
+            if !enteredA && back { focusExtreme(a, toward: dir); return }
+        }
+    }
+
+    /// Descend into `node` and focus the leaf nearest the edge implied by `dir`
+    /// (the pane that shares a border with where we came from).
+    private func focusExtreme(_ node: PaneNode, toward dir: FocusDirection) {
+        var cur = node
+        while case .split(_, let d, let a, let b) = cur {
+            switch (d, dir) {
+            case (.vertical, .left), (.horizontal, .up):
+                cur = b                                  // right/bottom-most leaf
+            case (.vertical, .right), (.horizontal, .down):
+                cur = a                                  // left/top-most leaf
+            default:
+                cur = a                                  // axis-agnostic: either side spans it
+            }
+        }
+        if case .terminal(let s) = cur { focusedSessionId = s }
     }
 
     func setTitle(_ id: UUID, _ title: String) {

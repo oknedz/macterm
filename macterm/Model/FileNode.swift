@@ -7,16 +7,19 @@ final class FileNode: Identifiable, ObservableObject {
     let url: URL
     let name: String
     let isDirectory: Bool
+    /// Level in the tree (favorites root = 0) — drives the themed folder tint.
+    let depth: Int
 
     /// `nil` = not yet loaded; `[]` = loaded and empty.
     @Published var children: [FileNode]?
 
     var id: URL { url }
 
-    init(url: URL, isDirectory: Bool) {
+    init(url: URL, isDirectory: Bool, depth: Int = 0) {
         self.url = url
         self.name = url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent
         self.isDirectory = isDirectory
+        self.depth = depth
     }
 
     func loadChildren() {
@@ -29,7 +32,7 @@ final class FileNode: Identifiable, ObservableObject {
         )) ?? []
         children = urls.compactMap { u in
             let isDir = (try? u.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            return FileNode(url: u, isDirectory: isDir)
+            return FileNode(url: u, isDirectory: isDir, depth: depth + 1)
         }
         .sorted {
             if $0.isDirectory != $1.isDirectory { return $0.isDirectory }

@@ -21,7 +21,7 @@ struct FolderRow: View {
                     .font(.system(size: 9))
                     .frame(width: 10)
                 Image(systemName: expanded ? "folder.fill" : "folder")
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(Color(nsColor: controller.theme.hierarchyColor(level: node.depth)))
                 Text(node.name).lineLimit(1).font(.system(size: 12))
                 Spacer(minLength: 0)
             }
@@ -63,15 +63,16 @@ private struct FileRow: View {
     @State private var hover = false
     @EnvironmentObject private var controller: TerminalController
 
-    private var icon: (name: String, color: Color) {
-        fileIcon(for: node.url)
+    private var iconColor: Color {
+        guard let slot = fileSlot(for: node.url) else { return Color.secondary }
+        return Color(nsColor: controller.theme.hierarchyColors[slot])
     }
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon.name)
+            Image(systemName: iconName(for: node.url))
                 .font(.system(size: 11))
-                .foregroundStyle(icon.color)
+                .foregroundStyle(iconColor)
                 .frame(width: 14, alignment: .center)
             Text(node.name).lineLimit(1).font(.system(size: 12))
             Spacer(minLength: 0)
@@ -84,87 +85,64 @@ private struct FileRow: View {
         .onTapGesture(count: 2) { controller.openFile(node.url) }
     }
 }
-
-/// Map a file extension to a modern, language-tinted SF Symbol so the file
-/// tree reads like a real editor: distinct glyphs where SF Symbols ships
-/// them, brand-tinted otherwise.
-private func fileIcon(for url: URL) -> (name: String, color: Color) {
+/// Map a file extension to an SF Symbol glyph plus a slot into the active
+/// theme's hierarchy palette (nil = neutral secondary tint). Glyphs keep
+/// their editor-style shapes; ALL colors now come from the theme.
+private func iconName(for url: URL) -> String {
     switch url.pathExtension.lowercased() {
-    // Apple / Swift
-    case "swift":
-        return ("swift", .orange)
-    case "xcodeproj", "xcworkspace", "swiftpm", "xcframework":
-        return ("hammer", .gray)
+    case "swift":                       return "swift"
+    case "xcodeproj", "xcworkspace", "swiftpm", "xcframework": return "hammer"
+    case "html", "htm":                 return "chevron.left.slash.chevron.right"
+    case "css", "scss", "sass", "less": return "paintbrush"
+    case "js", "jsx", "mjs", "cjs", "ts", "tsx": return "curlybraces"
+    case "json":                        return "ellipsis.curlybraces"
+    case "py":                          return "text.line.first.and.arrowtriangle.forward"
+    case "rb", "php", "lua":            return "curlybraces"
+    case "sh", "zsh", "bash", "command", "fish": return "terminal"
+    case "rs", "go", "c", "h", "cpp", "hpp", "cc", "hh": return "curlybraces"
+    case "java", "kt", "dart":          return "curlybraces"
+    case "sql":                         return "tablecells"
+    case "yaml", "yml", "toml":         return "ellipsis.curlybraces"
+    case "plist", "xml":                return "chevron.left.slash.chevron.right"
+    case "ini", "env", "lock", "conf", "cfg":  return "doc.plaintext"
+    case "md", "markdown", "rst", "adoc":      return "doc.richtext"
+    case "txt":                         return "doc.plaintext"
+    case "png", "jpg", "jpeg", "gif", "svg", "webp", "heic", "bmp": return "photo"
+    case "pdf":                         return "doc.richtext"
+    case "zip", "gz", "tgz", "tar", "dmg", "7z", "rar": return "archivebox"
+    case "git", "gitignore", "gitattributes", "gitmodules", "gitconfig": return "git.branch"
+    case "app":                         return "app"
+    default:                            return "doc"
+    }
+}
 
-    // Web
-    case "html", "htm":
-        return ("chevron.left.slash.chevron.right", .orange)
-    case "css", "scss", "sass", "less":
-        return ("paintbrush", .blue)
-    case "js", "jsx", "mjs", "cjs":
-        return ("curlybraces", .yellow)
-    case "ts", "tsx":
-        return ("curlybraces", Color(red: 0.20, green: 0.50, blue: 0.95))
-    case "json":
-        return ("ellipsis.curlybraces", .yellow)
-
-    // Scripting
-    case "py":
-        return ("text.line.first.and.arrowtriangle.forward", Color(red: 0.27, green: 0.45, blue: 0.85))
-    case "rb":
-        return ("curlybraces", .red)
-    case "php":
-        return ("curlybraces", Color(red: 0.55, green: 0.35, blue: 0.70))
-    case "lua":
-        return ("curlybraces", Color(red: 0.10, green: 0.40, blue: 0.70))
+/// Slot into `AppTheme.hierarchyColors` (0=blue 1=cyan 2=green 3=yellow
+/// 4=magenta 5=red) — nil renders as neutral secondary text.
+private func fileSlot(for url: URL) -> Int? {
+    switch url.pathExtension.lowercased() {
+    // Code — blue
+    case "swift", "js", "jsx", "mjs", "cjs", "ts", "tsx", "py", "rb", "php",
+         "lua", "rs", "go", "c", "h", "cpp", "hpp", "cc", "hh",
+         "java", "kt", "dart", "sql", "app":
+        return 0
+    // Web / markup — cyan
+    case "html", "htm", "css", "scss", "sass", "less", "xml", "plist":
+        return 1
+    // Scripts & shell — green
     case "sh", "zsh", "bash", "command", "fish":
-        return ("terminal", .green)
-
-    // Systems
-    case "rs":
-        return ("curlybraces", Color(red: 0.85, green: 0.45, blue: 0.20))
-    case "go":
-        return ("curlybraces", Color(red: 0.20, green: 0.70, blue: 0.85))
-    case "c", "h":
-        return ("curlybraces", .blue)
-    case "cpp", "hpp", "cc", "hh":
-        return ("curlybraces", Color(red: 0.30, green: 0.50, blue: 0.95))
-    case "java", "kt":
-        return ("curlybraces", Color(red: 0.85, green: 0.30, blue: 0.25))
-    case "dart":
-        return ("curlybraces", Color(red: 0.10, green: 0.70, blue: 0.85))
-    case "sql":
-        return ("tablecells", Color(red: 0.30, green: 0.50, blue: 0.80))
-
-    // Data / config
-    case "yaml", "yml", "toml":
-        return ("ellipsis.curlybraces", .gray)
-    case "plist", "xml":
-        return ("chevron.left.slash.chevron.right", .gray)
-    case "ini", "env", "lock", "conf", "cfg":
-        return ("doc.plaintext", .gray)
-    case "md", "markdown", "rst", "adoc":
-        return ("doc.richtext", Color(red: 0.40, green: 0.60, blue: 0.90))
-    case "txt":
-        return ("doc.plaintext", .secondary)
-
-    // Media / docs
-    case "png", "jpg", "jpeg", "gif", "svg", "webp", "heic", "bmp":
-        return ("photo", .pink)
-    case "pdf":
-        return ("doc.richtext", .red)
-    case "zip", "gz", "tgz", "tar", "dmg", "7z", "rar":
-        return ("archivebox", .brown)
-
-    // VCS
-    case "git", "gitignore", "gitattributes", "gitmodules", "gitconfig":
-        return ("git.branch", .orange)
-
-    // Apps / bundles
-    case "app":
-        return ("app", .blue)
-
+        return 2
+    // Data & config — yellow
+    case "json", "yaml", "yml", "toml", "ini", "env", "lock", "conf", "cfg",
+         "gitignore", "gitattributes", "gitmodules", "gitconfig":
+        return 3
+    // Docs & media — magenta
+    case "md", "markdown", "rst", "adoc", "png", "jpg", "jpeg", "gif",
+         "svg", "webp", "heic", "bmp":
+        return 4
+    // Archives, PDFs, VCS internals — red
+    case "zip", "gz", "tgz", "tar", "dmg", "7z", "rar", "pdf", "git":
+        return 5
     default:
-        return ("doc", .secondary)
+        return nil
     }
 }

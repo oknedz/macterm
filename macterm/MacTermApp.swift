@@ -12,31 +12,40 @@ struct MacTermApp: App {
         }
         .defaultSize(width: 1000, height: 680)
         .commands {
+            // Every item routes through `controller.perform` and takes its
+            // shortcut from the same catalog the Shortcuts settings pane edits,
+            // so rebinding in Settings updates the menu automatically.
             CommandGroup(replacing: .newItem) {
-                Button("New Tab") { controller.newTab() }
-                    .keyboardShortcut(controller.keyboardShortcut(for: "newTab"))
+                commandButton("newTab")
+            }
+            CommandMenu("Shell") {
+                commandButton("nextTab")
+                commandButton("prevTab")
+                Divider()
+                commandButton("splitRight")
+                commandButton("splitDown")
+                Divider()
+                commandButton("focusLeft")
+                commandButton("focusUp")
+                commandButton("focusDown")
+                commandButton("focusRight")
             }
             CommandGroup(after: .windowList) {
-                Button("Close Tab") { controller.closeActive() }
-                    .keyboardShortcut(controller.keyboardShortcut(for: "closeTab"))
-                Button("Toggle Sidebar") { controller.toggleSidebar() }
-                    .keyboardShortcut(controller.keyboardShortcut(for: "toggleSidebar"))
+                commandButton("closePane")
+                commandButton("toggleSidebar")
+                commandButton("clearTerminal")
                 Divider()
-                Button("Split Right") { controller.splitFocused(vertical: true) }
-                    .keyboardShortcut("d", modifiers: .command)
-                Button("Split Down") { controller.splitFocused(vertical: false) }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                commandButton("fontBigger")
+                commandButton("fontSmaller")
+                commandButton("fontReset")
                 Divider()
-                ForEach(Array(controller.tabs.prefix(9).enumerated()), id: \.element.id) { i, t in
-                    Button("Tab \(i + 1)") {
-                        controller.activeTabId = t.id
-                        controller.focusedSessionId = t.layout.firstLeaf ?? controller.focusedSessionId
-                    }
-                        .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: .command)
+                ForEach(1...9, id: \.self) { n in
+                    commandButton("goToTab.\(n)")
                 }
-                Divider()
-                Button("Clear") { controller.clearActive() }
-                    .keyboardShortcut(controller.keyboardShortcut(for: "clear"))
+            }
+            CommandGroup(replacing: .pasteboard) {
+                commandButton("copy")
+                commandButton("paste")
             }
         }
         .windowStyle(.hiddenTitleBar)
@@ -45,5 +54,13 @@ struct MacTermApp: App {
                 .environmentObject(controller)
         }
         .windowStyle(.automatic)
+    }
+
+    /// One menu item backed by the shared command catalog.
+    @ViewBuilder
+    private func commandButton(_ id: String) -> some View {
+        let spec = TerminalController.commandCatalog.first { $0.id == id }
+        Button(spec?.title ?? id) { controller.perform(id) }
+            .keyboardShortcut(controller.keyboardShortcut(for: id))
     }
 }
