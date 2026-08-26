@@ -638,8 +638,8 @@ final class TerminalController: ObservableObject {
         case "fontBigger":    fontSize = min(fontSize + 1, 24)
         case "fontSmaller":   fontSize = max(fontSize - 1, 8)
         case "fontReset":     fontSize = 13
-        case "copy":          NSApp.sendAction(Selector(("copy:")), to: nil, from: nil)
-        case "paste":         NSApp.sendAction(Selector(("paste:")), to: nil, from: nil)
+        case "copy":          NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+        case "paste":         NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
         default:
             if id.hasPrefix("goToTab."), let n = Int(id.dropFirst("goToTab.".count)) {
                 goToTab(n)

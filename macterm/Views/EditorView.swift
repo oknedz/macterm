@@ -98,6 +98,7 @@ struct HighlightingEditor: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.tv = tv
         coordinator.parent = self
+        context.coordinator.syncTheme()
         coordinator.apply(text)
         return scroll
     }
@@ -108,7 +109,8 @@ struct HighlightingEditor: NSViewRepresentable {
         // Re-apply appearance on every update so live setting changes (bg, font,
         // selection, caret) take effect without recreating the text view.
         context.coordinator.applyAppearance(tv)
-        if tv.string != text {
+        let themeChanged = context.coordinator.syncTheme()
+        if themeChanged || tv.string != text {
             context.coordinator.apply(text)
         }
     }
@@ -119,10 +121,22 @@ struct HighlightingEditor: NSViewRepresentable {
         weak var tv: NSTextView?
         var parent: HighlightingEditor?
         private let highlighter: Highlightr? = Highlightr()
+        /// Slug whose matching Highlightr scheme is currently loaded.
+        var appliedThemeSlug: String?
 
         override init() {
             super.init()
-            _ = highlighter?.setTheme(to: "oceanic-next")
+            _ = highlighter?.setTheme(to: AppTheme.bySlug(AppTheme.defaultSlug)?.hljsTheme ?? "onedark")
+            appliedThemeSlug = AppTheme.defaultSlug
+        }
+
+        /// Load the Highlightr scheme matching the selected base46 theme.
+        /// Returns true when the scheme changed and a re-highlight is needed.
+        @MainActor func syncTheme() -> Bool {
+            guard let p = parent else { return false }
+            guard appliedThemeSlug != p.controller.themeName else { return false }
+            appliedThemeSlug = p.controller.themeName
+            return highlighter?.setTheme(to: p.controller.theme.hljsTheme) != nil
         }
 
     /// Push terminal appearance (bg, font, caret, selection) onto the view.

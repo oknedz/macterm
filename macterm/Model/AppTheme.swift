@@ -59,6 +59,51 @@ struct AppTheme: Identifiable {
         hierarchyColors[abs(level) % hierarchyColors.count]
     }
 
+    // MARK: - Editor syntax highlighting
+
+    /// The bundled Highlightr scheme that best matches this base46 theme.
+    /// Curated for the well-known pairs, keyword-based for families,
+    /// dark/light fallback for everything else.
+    var hljsTheme: String {
+        switch slug {
+        case "onedark", "doomchad", "pastelDark", "palenight":
+            return "onedark"
+        case "one_light", "onenord_light", "oceanic-light", "nano-light",
+             "sunrise_breeze", "blossom_light":
+            return "one-light"
+        case "tokyonight":                       return "tokyo-night-dark"
+        case "gruvbox", "gruvchad":              return "gruvbox-dark-medium"
+        case "gruvbox_light":                    return "gruvbox-light-medium"
+        case "nord", "onenord":                  return "nord"
+        case "dracula", "chadracula", "chadracula-evondev":
+            return "dracula"
+        case "rosepine":                         return "rose-pine"
+        case "rosepine-dawn":                    return "rose-pine-dawn"
+        case "solarized_dark", "solarized_osaka": return "solarized-dark"
+        case "solarized_light":                  return "solarized-light"
+        case "github_dark":                      return "github-dark"
+        case "github_light":                     return "github-light"
+        case "nightowl":                         return "night-owl"
+        case "material-darker", "material-deep-ocean":
+            return "material-darker"
+        case "material-lighter":                 return "material-lighter"
+        case "oceanic-next":                     return "oceanicnext"
+        case "darcula-dark", "jellybeans":       return "darcula"
+        case "zenburn":                          return "zenburn"
+        case "tomorrow_night":                   return "tomorrow-night"
+        case "monochrome":                       return "grayscale-dark"
+        case "oxocarbon":                        return "obsidian"
+        case "vscode_dark":                      return "vs2015"
+        case "vscode_light":                     return "vs"
+        case "catppuccin-latte":                 return "one-light"
+        default:
+            if slug.contains("light") { return "one-light" }
+            if slug.contains("catppuccin") { return "tokyo-night-dark" }
+            if slug.contains("everforest") { return slug.contains("light") ? "atelier-forest-light" : "atelier-forest-dark" }
+            return isDark ? "onedark" : "one-light"
+        }
+    }
+
     // MARK: - Catalog
 
     static let all: [AppTheme] = NvChadThemes.raw.map {
