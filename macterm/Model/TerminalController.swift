@@ -24,6 +24,22 @@ struct KeyBinding: Codable, Equatable, Identifiable {
         self.action = action
     }
 }
+
+/// Event-level matcher shared by the view interceptor and the app-global
+/// shortcut monitor: same character plus identical cmd/shift/opt/ctrl flags.
+extension KeyBinding {
+    func matches(event: NSEvent) -> Bool {
+        guard !key.isEmpty else { return false }
+        let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        guard chars == key else { return false }
+        let f = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let want = EventModifiers(rawValue: modifiers)
+        return f.contains(.command) == want.contains(.command)
+            && f.contains(.shift) == want.contains(.shift)
+            && f.contains(.option) == want.contains(.option)
+            && f.contains(.control) == want.contains(.control)
+    }
+}
 /// One rebindable app command. The catalog below is the SINGLE source of
 /// truth: it feeds the default keybindings, the Shortcuts settings pane and
 /// the menu bar, so all three always agree.
@@ -373,8 +389,31 @@ final class TerminalController: ObservableObject {
         tabs = [tab]
         activeTabId = tab.id
         focusedSessionId = first.id
+        installGlobalShortcuts()
     }
 
+    /// App-global key interception for terminal-scoped combos. Local monitors
+    /// run BEFORE window dispatch (responder chain AND menu key-equivalent
+    /// processing), so a bound combo is routed deterministically even when the
+    /// system Window→Close item shares it (⌘W) or focus sits outside the
+    /// terminal view. Scope-guarded: only closePane bindings, and only
+    /// workspace windows — Settings carries a SettingsMarkerView and keeps
+    /// its native ⌘W behavior.
+    private var keyMonitor: Any?
+
+    private func installGlobalShortcuts() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Monitors deliver on the same main runloop that installed them.
+            guard let self,
+                  let win = NSApp.keyWindow ?? NSApp.mainWindow,
+                  !windowContains(win, SettingsMarkerView.self),
+                  self.keyBindings.contains(where: { self.actionId(for: $0) == "closePane" && $0.matches(event: event) })
+            else { return event }
+            self.closeFocusedPane()
+            return nil // swallowed before responder chain / menus see it
+        }
+    }
 
     private func restore() {
         let d = UserDefaults.standard

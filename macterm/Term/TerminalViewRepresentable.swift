@@ -156,7 +156,7 @@ final class ResizableTerminalView: LocalProcessTerminalView {
         // View level runs BEFORE menu processing, so terminal-scoped commands
         // win even when system items share the combo (e.g. ⌘W vs Close Window).
         let hit: KeyBinding? = MainActor.assumeIsolated {
-            controller?.keyBindings.first(where: { bindingMatches(event, $0) })
+            controller?.keyBindings.first(where: { $0.matches(event: event) })
         }
         guard let binding = hit else { return super.performKeyEquivalent(with: event) }
         let actionId: String = MainActor.assumeIsolated {
@@ -229,18 +229,6 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     func clearTerminalScreen() {
         send(txt: "clear\n")
         clearScrollback()
-    }
-
-    private func bindingMatches(_ event: NSEvent, _ binding: KeyBinding) -> Bool {
-        guard !binding.key.isEmpty else { return false }
-        let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        guard chars == binding.key else { return false }
-        let f = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let want = EventModifiers(rawValue: binding.modifiers)
-        return f.contains(.command) == want.contains(.command)
-            && f.contains(.shift) == want.contains(.shift)
-            && f.contains(.option) == want.contains(.option)
-            && f.contains(.control) == want.contains(.control)
     }
 
     deinit { timer?.invalidate() }

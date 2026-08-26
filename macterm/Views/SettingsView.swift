@@ -37,6 +37,8 @@ struct SettingsRoot: View {
         // Roomy on purpose: the Keys pane lists every command grouped.
         .frame(minWidth: 940, minHeight: 640)
         .background(VisualEffectView(material: .windowBackground, blendingMode: .withinWindow))
+        // Tags this window so ⌘W interception skips it (native Close stays).
+        .background(SettingsWindowMarker())
         // The Settings window follows the app theme too (dark/light materials + controls).
         .preferredColorScheme(controller.theme.isDark ? .dark : .light)
     }

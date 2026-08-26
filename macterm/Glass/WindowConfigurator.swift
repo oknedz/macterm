@@ -23,3 +23,23 @@ struct WindowConfigurator: NSViewRepresentable {
     }
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
+
+/// Invisible zero-size view tagging the Settings window so the global
+/// shortcut monitor can exempt native windows from terminal-scoped combos.
+final class SettingsMarkerView: NSView {}
+
+struct SettingsWindowMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { SettingsMarkerView(frame: .zero) }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// Depth-first containment test used by the shortcut monitor.
+func windowContains(_ window: NSWindow?, _ type: NSView.Type) -> Bool {
+    guard let root = window?.contentView else { return false }
+    var stack: [NSView] = [root]
+    while let v = stack.popLast() {
+        if v.isKind(of: type) { return true }
+        stack.append(contentsOf: v.subviews)
+    }
+    return false
+}

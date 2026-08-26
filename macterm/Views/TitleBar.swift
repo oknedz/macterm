@@ -154,10 +154,12 @@ private struct TabPill: View {
                 renaming = true
             }
             Menu("Color") {
+                // NSMenu-backed menus only draw Text + Image; SwiftUI Shapes
+                // (Circle) are dropped — hence pre-rendered NSImage dots.
                 ForEach(tabAccentPalette, id: \.name) { item in
                     Button { controller.setTabColor(tab.id, item.color) } label: {
                         HStack(spacing: 6) {
-                            Circle().fill(Color(nsColor: item.color)).frame(width: 10, height: 10)
+                            Image(nsImage: Self.menuDot(item.color))
                             Text(item.name)
                         }
                     }
@@ -168,6 +170,16 @@ private struct TabPill: View {
         }
     }
 
+    /// Round swatch as an NSImage so it actually renders inside menus.
+    private static func menuDot(_ color: NSColor) -> NSImage {
+        let img = NSImage(size: NSSize(width: 11, height: 11), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+            return true
+        }
+        img.isTemplate = false
+        return img
+    }
     private func commitRename() {
         let t = draft.trimmingCharacters(in: .whitespaces)
         if !t.isEmpty { controller.renameTab(tab.id, to: t) }
