@@ -17,30 +17,30 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             // Inline header: search on the left, create actions on the right.
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                TextField("Search files…", text: $search)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .disableAutocorrection(true)
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    TextField("Search files…", text: $search)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .disableAutocorrection(true)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color.primary.opacity(0.18), lineWidth: 0.5)
+                )
                 Spacer(minLength: 2)
-                Button {
+                HeaderIconButton(systemName: "folder.badge.plus",
+                                 help: "New folder in the active terminal's directory") {
                     create(.folder)
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 11))
                 }
-                .buttonStyle(.borderless)
-                .help("New folder in the active terminal's directory")
-                Button {
+                HeaderIconButton(systemName: "doc.badge.plus",
+                                 help: "New file in the active terminal's directory") {
                     create(.file)
-                } label: {
-                    Image(systemName: "doc.badge.plus")
-                        .font(.system(size: 11))
                 }
-                .buttonStyle(.borderless)
-                .help("New file in the active terminal's directory")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
@@ -208,5 +208,30 @@ struct Sidebar: View {
 
     private func reloadRoots() {
         roots = controller.favorites.map { FileNode(url: $0, isDirectory: true) }
+    }
+}
+
+/// Compact icon button with a subtle hover wash — matches the sidebar header
+/// size (11pt glyph) and adapts to dark/light themes via `Color.primary`.
+private struct HeaderIconButton: View {
+    let systemName: String
+    let help: String
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11))
+                .foregroundStyle(hover ? .primary : .secondary)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(hover ? Color.primary.opacity(0.10) : .clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hover = $0 }
     }
 }

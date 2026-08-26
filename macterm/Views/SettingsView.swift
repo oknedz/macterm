@@ -545,6 +545,15 @@ private struct ShortcutCaptureField: View {
             if event.keyCode == 53 { self.stopListening(); return nil }   // Esc cancels
             // Accept any printable character INCLUDING space (nvim <leader>);
             // ignore pure-modifier presses.
+            // Arrow keys arrive as private-use chars; store readable glyphs.
+            if let glyph = KeyBinding.arrowGlyphByKeyCode[event.keyCode] {
+                var b = binding
+                b.key = glyph
+                b.modifiers = Int(Self.eventModifiers(event).rawValue)
+                binding = b
+                self.stopListening()
+                return nil
+            }
             guard let chars = event.charactersIgnoringModifiers,
                   let first = chars.first,
                   first == " " || !first.isWhitespace else { return event }

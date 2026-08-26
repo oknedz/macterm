@@ -38,6 +38,13 @@ struct FolderRow: View {
                 controller.setExpanded(node.url.standardizedFileURL.path, willExpand)
                 if willExpand { node.loadChildren() }
             }
+        .onAppear {
+            // Persisted expansions restore the chevron before `loadChildren`
+            // is ever called. Without this, the row draws as "open" while
+            // children stay nil — the phantom-expanded bug — and the next
+            // click merely collapses instead of expanding.
+            if expanded, node.children == nil { node.loadChildren() }
+        }
             .highPriorityGesture(
                 TapGesture().modifiers(.command).onEnded {
                     controller.cd(node.url.path)

@@ -135,6 +135,29 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     var sessionId: UUID?
     private static let resizeDebounce: TimeInterval = 0.06
     private var pendingSize: CGSize?
+    /// True while AppKit is animating a live resize (drag-to-resize).
+    /// SwiftTerm's draw path feeds the current screen content into the
+    /// NSTextStorage on every redraw; during a drag AppKit issues many
+    /// draws, each appending the prompt and stacking visible duplicates
+    /// (`~/MacTerm/macterm` printed 4× while dragging). Skipping draw
+    /// during the drag freezes the on-screen content; the debounced
+    /// `applyPendingSize` then re-flows the (single) prompt on release.
+    private var inLiveDrag = false
+
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        inLiveDrag = true
+    }
+
+    override func viewDidEndLiveResize() {
+        inLiveDrag = false
+        super.viewDidEndLiveResize()
+        // Force one full redraw at the new size so the previously-frozen
+        // content re-flows cleanly instead of looking stale.
+        if let size = pendingSize { applyPendingSize(size) }
+        needsDisplay = true
+    }
+
     private var timer: Timer?
 
     override func setFrameSize(_ newSize: NSSize) {

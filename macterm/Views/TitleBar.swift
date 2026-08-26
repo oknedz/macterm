@@ -30,14 +30,26 @@ struct TitleBar: View {
 
             // Settings gear, top-right, inline with the tabs.
             SettingsLink {
-                SettingsGear()
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Color.clear)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.trailing, 14)
         }
         .frame(height: 36)
         .padding(.vertical, 2)
-        .background(VisualEffectView(material: .titlebar, blendingMode: .withinWindow))
+        .background {
+            // Theme background bleeds through the titlebar vibrancy so the
+            // top bar unifies with the rest of the app on every theme.
+            ZStack {
+                Color(nsColor: controller.theme.background).opacity(0.55)
+                VisualEffectView(material: .titlebar, blendingMode: .withinWindow)
+            }
+        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .frame(height: 0.5)
@@ -57,29 +69,14 @@ struct IconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(hover ? .white : .secondary)
-                .frame(width: 30, height: 30)
-                .background(hover ? Color.white.opacity(0.16) : Color.clear)
-                .cornerRadius(7)
+                .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .frame(width: 30, height: 30)
+        .background(hover ? Color.white.opacity(0.16) : Color.clear)
+        .cornerRadius(7)
+        .contentShape(Rectangle())
         .onHover { hover = $0 }
-    }
-}
-
-/// Gear that opens the native Settings scene. Must use `SettingsLink` — the
-/// private `showSettingsWindow:` selector is rejected by SwiftUI at runtime.
-private struct SettingsGear: View {
-    @State private var hover = false
-    var body: some View {
-        Image(systemName: "gearshape")
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(hover ? .white : .secondary)
-            .frame(width: 30, height: 30)
-            .background(hover ? Color.white.opacity(0.16) : Color.clear)
-            .cornerRadius(7)
-            .contentShape(Rectangle())
-            .onHover { hover = $0 }
     }
 }
 
@@ -108,10 +105,8 @@ private struct TabPill: View {
                     .frame(width: 8, height: 8)
             }
             if renaming {
-                TextField("", text: $draft, onCommit: commitRename)
-                    .font(.system(size: 11, weight: .medium))
+                RenamingTextField(text: $draft, onCommit: commitRename)
                     .frame(maxWidth: 110)
-                    .textFieldStyle(.plain)
                     .onAppear { draft = tab.title }
                     .onExitCommand { renaming = false }
             } else {
@@ -128,7 +123,7 @@ private struct TabPill: View {
             .buttonStyle(.plain)
             .opacity(hover || active ? 1 : 0)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .padding(.vertical, 3)
         .background(
             active
@@ -137,12 +132,12 @@ private struct TabPill: View {
         )
         // Accent border on the ACTIVE tab — unambiguous location indicator.
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .stroke(active ? Color(nsColor: controller.accentColor) : .clear,
                         lineWidth: active ? 1.5 : 0)
         )
         .foregroundStyle(.primary)
-        .cornerRadius(6)
+        .cornerRadius(11)
         .onHover { hover = $0 }
         .onTapGesture {
             controller.activeTabId = tab.id
@@ -152,6 +147,11 @@ private struct TabPill: View {
             Button("Rename") {
                 draft = tab.title
                 renaming = true
+                // Focus the new field and highlight its text so the user
+                // can type to replace the whole name immediately.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                    NSApp.sendAction(#selector(NSText.selectAll), to: nil, from: nil)
+                }
             }
             Menu("Color") {
                 // NSMenu-backed menus only draw Text + Image; SwiftUI Shapes
@@ -186,3 +186,94 @@ private struct TabPill: View {
         renaming = false
     }
 }
+
+/// NSTextField-backed SwiftUI field that auto-focuses and selects all text.
+private struct RenamingTextField: NSViewRepresentable {
+    @Binding var text: String
+    var onCommit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: text)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        field.lineBreakMode = .byTruncatingTail
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.commit)
+        field.delegate = context.coordinator
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text { nsView.stringValue = text }
+        // Become first responder and select all when the view appears or updates in rename mode.
+        DispatchQueue.main.async {
+            // Prime focus and selection only once to avoid replacing text on every keystroke.
+            if context.coordinator.primed == false {
+                if nsView.window?.firstResponder != nsView.currentEditor() {
+                    nsView.becomeFirstResponder()
+                }
+                nsView.currentEditor()?.selectAll(nil)
+                context.coordinator.primed = true
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let parent: RenamingTextField
+        var primed = false
+        var canceled = false
+        
+        init(_ parent: RenamingTextField) { self.parent = parent }
+
+        @objc func commit() {
+            DispatchQueue.main.async {
+                self.parent.onCommit()
+            }
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                // Mark as canceled so we don't commit on end editing.
+                canceled = true
+                return false // allow default behavior to end editing
+            }
+            return false
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            // Auto-commit on focus loss unless the user canceled with ESC.
+            if !canceled {
+                DispatchQueue.main.async {
+                    self.parent.onCommit()
+                }
+            }
+            canceled = false
+        }
+    }
+}
+
+/// Small gear glyph used inside SettingsLink in the title bar.
+private struct SettingsGear: View {
+    @State private var hover = false
+
+    var body: some View {
+        Image(systemName: "gearshape")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 30, height: 30)
+            .background(hover ? Color.white.opacity(0.16) : Color.clear)
+            .cornerRadius(7)
+            .contentShape(Rectangle())
+            .onHover { hover = $0 }
+    }
+}
+

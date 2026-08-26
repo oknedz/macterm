@@ -30,8 +30,10 @@ struct KeyBinding: Codable, Equatable, Identifiable {
 extension KeyBinding {
     func matches(event: NSEvent) -> Bool {
         guard !key.isEmpty else { return false }
+        // Arrow keys arrive as private-use chars (F700–F703); stored as glyphs.
+        let expected = Self.arrowCharByGlyph[key] ?? key
         let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        guard chars == key else { return false }
+        guard chars == expected else { return false }
         let f = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let want = EventModifiers(rawValue: modifiers)
         return f.contains(.command) == want.contains(.command)
@@ -39,6 +41,20 @@ extension KeyBinding {
             && f.contains(.option) == want.contains(.option)
             && f.contains(.control) == want.contains(.control)
     }
+}
+
+extension KeyBinding {
+    /// Arrow-key glyph ↔ macOS private-use chars (NSEvent `charactersIgnoringModifiers`).
+    /// NvChad-style. Old captures may have stored the private-use chars
+    /// directly — `restore()` rewrites them to the readable glyph form so
+    /// describe() and SwiftUI's KeyEquivalent map them cleanly.
+    static let arrowGlyphByKeyCode: [UInt16: String] =
+        [123: "←", 124: "→", 125: "↓", 126: "↑"]
+    static let arrowCharByGlyph: [String: String] =
+        ["←": "\u{F702}", "→": "\u{F703}", "↓": "\u{F701}", "↑": "\u{F700}"]
+    static let arrowGlyphByChar: [String: String] = [
+        "\u{F700}": "↑", "\u{F701}": "↓", "\u{F702}": "←", "\u{F703}": "→",
+    ]
 }
 /// One rebindable app command. The catalog below is the SINGLE source of
 /// truth: it feeds the default keybindings, the Shortcuts settings pane and
@@ -445,8 +461,9 @@ final class TerminalController: ObservableObject {
             // Pre-catalog ids → current ids, then merge with new defaults.
             let legacy: [String: String] = ["clear": "clearTerminal", "closeTab": "closePane"]
             var migrated = dec.map { b in
-                guard let newId = legacy[b.id] else { return b }
-                return KeyBinding(id: newId, key: b.key, modifiers: b.modifiers)
+                let id = legacy[b.id] ?? b.id
+                let k  = KeyBinding.arrowGlyphByChar[b.key] ?? b.key
+                return KeyBinding(id: id, key: k, modifiers: b.modifiers, action: b.action)
             }
             var seen = Set<String>()
             migrated.removeAll { !seen.insert($0.id).inserted }
@@ -578,13 +595,19 @@ final class TerminalController: ObservableObject {
         }
     }
     func renameTab(_ id: UUID, to title: String) {
-        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs[idx].title = title
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard let idx = self.tabs.firstIndex(where: { $0.id == id }) else { return }
+            self.tabs[idx].title = title
+        }
     }
 
     func setTabColor(_ id: UUID, _ color: NSColor?) {
-        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs[idx].color = color
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard let idx = self.tabs.firstIndex(where: { $0.id == id }) else { return }
+            self.tabs[idx].color = color
+        }
     }
 
     /// Called when a shell exits; honors the "close on exit" preference.
@@ -696,7 +719,15 @@ final class TerminalController: ObservableObject {
     /// unassigned. Space (" ") maps to SwiftUI's `.space` key (nvim leader).
     func keyboardShortcut(for id: String) -> KeyboardShortcut? {
         guard let b = keyBindings.first(where: { $0.id == id }), !b.key.isEmpty else { return nil }
-        let key: KeyEquivalent = b.key == " " ? .space : KeyEquivalent(Character(b.key))
+        let key: KeyEquivalent
+        switch b.key {
+        case " ":  key = .space
+        case "↑":  key = .upArrow
+        case "↓":  key = .downArrow
+        case "←":  key = .leftArrow
+        case "→":  key = .rightArrow
+        default:   key = KeyEquivalent(Character(b.key))
+        }
         return KeyboardShortcut(key, modifiers: EventModifiers(rawValue: b.modifiers))
     }
 
@@ -995,3 +1026,4 @@ extension NSColor {
                   alpha: 1)
     }
 }
+
