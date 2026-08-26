@@ -132,8 +132,8 @@ private struct TabPill: View {
         .padding(.vertical, 3)
         .background(
             active
-                ? Color.primary.opacity(0.16)
-                : (hover ? Color.white.opacity(0.18) : Color.white.opacity(0.08))
+                ? Color(nsColor: controller.accentColor).opacity(0.22)
+                : (hover ? Color.primary.opacity(0.10) : Color.primary.opacity(0.05))
         )
         .foregroundStyle(.primary)
         .cornerRadius(6)

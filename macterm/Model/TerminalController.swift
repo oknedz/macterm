@@ -111,9 +111,9 @@ final class TerminalController: ObservableObject {
     @Published var editorBuffers: [UUID: EditorBuffer] = [:]
 
     // MARK: - Appearance
-    /// Active base theme name (bg/fg/caret/selection + ANSI palette derive from it,
-    /// optionally overridden per theme by the user in Settings).
-    @Published var themeName: String = "Midnight" { didSet { persist() } }
+    /// Active NvChad/base46 theme slug ("onedark"). All terminal colors, the
+    /// editor palette and the app's dark/light appearance derive from it.
+    @Published var themeName: String = AppTheme.defaultSlug { didSet { persist() } }
     /// Terminal background opacity (1 = opaque, <1 = frosted glass over the vibrancy).
     @Published var backgroundAlpha: Double = 0.7 { didSet { persist() } }
 
@@ -146,9 +146,6 @@ final class TerminalController: ObservableObject {
     @Published var keyBindings: [KeyBinding] = TerminalController.defaultKeyBindings() { didSet { persist() } }
 
 
-    // MARK: - Per-theme color overrides (user-tuned), persisted as JSON.
-    @Published private var overrides: [String: ColorOverride] = [:]
-
     let favorites: [URL] = [
         FileManager.default.homeDirectoryForCurrentUser
     ]
@@ -171,59 +168,6 @@ final class TerminalController: ObservableObject {
         return f.isEmpty ? ["Menlo"] : f
     }()
 
-    /// A terminal theme: base bg/fg plus caret + selection accents.
-    struct TerminalTheme: Identifiable {
-        let id = UUID()
-        let name: String
-        let bg: NSColor
-        let fg: NSColor
-        let caret: NSColor
-        let selection: NSColor
-    }
-
-    static let themes: [TerminalTheme] = [
-        TerminalTheme(name: "Midnight",
-            bg: NSColor(srgbRed: 0.043, green: 0.055, blue: 0.078, alpha: 1),
-            fg: NSColor(srgbRed: 0.773, green: 0.784, blue: 0.776, alpha: 1),
-            caret: NSColor(srgbRed: 0.773, green: 0.784, blue: 0.776, alpha: 1),
-            selection: NSColor(srgbRed: 0.227, green: 0.290, blue: 0.420, alpha: 1)),
-        TerminalTheme(name: "Tokyo Night",
-            bg: NSColor(srgbRed: 0.102, green: 0.106, blue: 0.149, alpha: 1),
-            fg: NSColor(srgbRed: 0.753, green: 0.792, blue: 0.961, alpha: 1),
-            caret: NSColor(srgbRed: 0.796, green: 0.855, blue: 0.969, alpha: 1),
-            selection: NSColor(srgbRed: 0.231, green: 0.259, blue: 0.427, alpha: 1)),
-        TerminalTheme(name: "One Dark",
-            bg: NSColor(srgbRed: 0.157, green: 0.173, blue: 0.204, alpha: 1),
-            fg: NSColor(srgbRed: 0.671, green: 0.698, blue: 0.749, alpha: 1),
-            caret: NSColor(srgbRed: 0.671, green: 0.698, blue: 0.749, alpha: 1),
-            selection: NSColor(srgbRed: 0.243, green: 0.267, blue: 0.322, alpha: 1)),
-        TerminalTheme(name: "Carbon",
-            bg: NSColor(srgbRed: 0.051, green: 0.051, blue: 0.051, alpha: 1),
-            fg: NSColor(srgbRed: 0.839, green: 0.839, blue: 0.839, alpha: 1),
-            caret: NSColor(srgbRed: 0.839, green: 0.839, blue: 0.839, alpha: 1),
-            selection: NSColor(srgbRed: 0.290, green: 0.290, blue: 0.290, alpha: 1))
-    ]
-    static let themeNames: [String] = themes.map { $0.name }
-
-    /// Coordinated 16-color ANSI palette (Dracula) — drives `installColors`.
-    static let ansiPalette: [SwiftTerm.Color] = [
-        SwiftTerm.Color(red8: 33, green8: 34, blue8: 44),
-        SwiftTerm.Color(red8: 255, green8: 85, blue8: 85),
-        SwiftTerm.Color(red8: 80, green8: 250, blue8: 123),
-        SwiftTerm.Color(red8: 241, green8: 250, blue8: 140),
-        SwiftTerm.Color(red8: 189, green8: 147, blue8: 249),
-        SwiftTerm.Color(red8: 255, green8: 121, blue8: 198),
-        SwiftTerm.Color(red8: 139, green8: 233, blue8: 253),
-        SwiftTerm.Color(red8: 248, green8: 248, blue8: 242),
-        SwiftTerm.Color(red8: 98, green8: 114, blue8: 164),
-        SwiftTerm.Color(red8: 255, green8: 110, blue8: 110),
-        SwiftTerm.Color(red8: 105, green8: 255, blue8: 148),
-        SwiftTerm.Color(red8: 255, green8: 255, blue8: 165),
-        SwiftTerm.Color(red8: 214, green8: 172, blue8: 255),
-        SwiftTerm.Color(red8: 255, green8: 146, blue8: 223),
-        SwiftTerm.Color(red8: 164, green8: 255, blue8: 255),
-        SwiftTerm.Color(red8: 255, green8: 255, blue8: 255)
-    ]
 
     static let cursorShapes: [(raw: String, label: String)] = [
         ("block", "Block"), ("bar", "Bar"), ("underline", "Underline")
@@ -243,28 +187,34 @@ final class TerminalController: ObservableObject {
     }
 
     // MARK: - Resolved values consumed by the terminal view
+    /// The active NvChad/base46 scheme; falls back to the default when the
+    /// persisted slug no longer exists (e.g. after a catalog refresh).
+    var theme: AppTheme { AppTheme.bySlug(themeName) ?? AppTheme.bySlug(AppTheme.defaultSlug)! }
+    var isDarkTheme: Bool { theme.isDark }
+    var accentColor: NSColor { theme.accent }
+
     var font: NSFont {
         NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
-    /// Background with the user's opacity applied (drives glass).
-    var backgroundColor: NSColor { effectiveColor(.bg).withAlphaComponent(backgroundAlpha) }
+    /// Theme background with the user's opacity applied (drives glass).
+    var backgroundColor: NSColor { theme.background.withAlphaComponent(backgroundAlpha) }
     /// Convenience: higher value = more transparent / more frosted terminal.
     var terminalTransparency: Double {
         get { 1.0 - backgroundAlpha }
         set { backgroundAlpha = 1.0 - newValue }
     }
-    var foregroundColor: NSColor { effectiveColor(.fg) }
-    var caretColor: NSColor { effectiveColor(.caret) }
-    var selectionColor: NSColor { effectiveColor(.selection).withAlphaComponent(0.45) }
-    var ansiColors: [SwiftTerm.Color] { Self.ansiPalette }
+    var foregroundColor: NSColor { theme.foreground }
+    var caretColor: NSColor { theme.caret }
+    var selectionColor: NSColor { theme.selection.withAlphaComponent(0.45) }
+    /// 16 ANSI slots mapped exactly like NvChad/base46's `term.lua`.
+    var ansiColors: [SwiftTerm.Color] { theme.ansiColors }
     /// Cheap signature of every *live-applied* setting, so the view can skip
     /// redundant re-application on unrelated `@Published` changes.
     var appearanceSignature: String {
-        let ov = overrides[themeName].map { "\($0.bg ?? "")\($0.fg ?? "")\($0.caret ?? "")\($0.selection ?? "")" } ?? ""
-        return "\(fontName)|\(fontSize)|\(themeName)|\(backgroundAlpha)|"
+        "\(fontName)|\(fontSize)|\(themeName)|\(backgroundAlpha)|"
             + "\(optionAsMetaKey)|\(allowMouseReporting)|\(backspaceSendsControlH)|\(useBrightColors)|"
-            + "\(cursorShapeRaw)|\(cursorBlink)|\(ansi256Raw)|\(ov)"
+            + "\(cursorShapeRaw)|\(cursorBlink)|\(ansi256Raw)"
     }
 
     var cursorStyle: CursorStyle {
@@ -295,56 +245,6 @@ final class TerminalController: ObservableObject {
         FileManager.default.homeDirectoryForCurrentUser.path
     }
 
-    // MARK: - Color overrides (per theme)
-    enum OverrideKey { case bg, fg, caret, selection }
-
-    func effectiveColor(_ key: OverrideKey) -> NSColor {
-        let theme = Self.themes.first(where: { $0.name == themeName }) ?? Self.themes[0]
-        guard let ov = overrides[themeName] else { return themeColor(theme, key) }
-        let hex: String?
-        switch key {
-        case .bg:        hex = ov.bg
-        case .fg:        hex = ov.fg
-        case .caret:     hex = ov.caret
-        case .selection: hex = ov.selection
-        }
-        return NSColor(hex: hex ?? "") ?? themeColor(theme, key)
-    }
-
-    private func themeColor(_ t: TerminalTheme, _ key: OverrideKey) -> NSColor {
-        switch key {
-        case .bg:        return t.bg
-        case .fg:        return t.fg
-        case .caret:     return t.caret
-        case .selection: return t.selection
-        }
-    }
-
-    func setOverride(_ key: OverrideKey, _ color: NSColor?) {
-        var set = overrides[themeName] ?? ColorOverride()
-        switch key {
-        case .bg:        set.bg = color?.hexString()
-        case .fg:        set.fg = color?.hexString()
-        case .caret:     set.caret = color?.hexString()
-        case .selection: set.selection = color?.hexString()
-        }
-        if set.isEmpty { overrides.removeValue(forKey: themeName) }
-        else { overrides[themeName] = set }
-        saveOverrides()
-        objectWillChange.send()
-    }
-
-    func resetColors() {
-        overrides.removeValue(forKey: themeName)
-        saveOverrides()
-        objectWillChange.send()
-    }
-
-    private func saveOverrides() {
-        if let data = try? JSONEncoder().encode(overrides) {
-            UserDefaults.standard.set(data, forKey: "colorOverrides")
-        }
-    }
 
     // MARK: - Init / persistence
     init() {
@@ -368,7 +268,9 @@ final class TerminalController: ObservableObject {
 
     private func restore() {
         let d = UserDefaults.standard
-        themeName              = d.string(forKey: "themeName") ?? themeName
+        // Validate against the catalog — stale slugs (old themes, renamed
+        // entries) fall back to the default instead of a black terminal.
+        themeName              = d.string(forKey: "themeName").flatMap(AppTheme.bySlug)?.slug ?? AppTheme.defaultSlug
         backgroundAlpha        = d.object(forKey: "backgroundAlpha") as? Double ?? backgroundAlpha
         fontName               = d.string(forKey: "fontName") ?? fontName
         fontSize               = d.object(forKey: "fontSize") as? Double ?? fontSize
@@ -386,10 +288,6 @@ final class TerminalController: ObservableObject {
         sidebarCollapsed       = d.object(forKey: "sidebarCollapsed") as? Bool ?? sidebarCollapsed
         sidebarWidth           = d.object(forKey: "sidebarWidth") as? Double ?? sidebarWidth
         terminalPadding        = d.object(forKey: "terminalPadding2") as? Double ?? terminalPadding
-        if let data = d.data(forKey: "colorOverrides"),
-           let dec = try? JSONDecoder().decode([String: ColorOverride].self, from: data) {
-            overrides = dec
-        }
         if let data = d.data(forKey: "keyBindings"),
            let dec = try? JSONDecoder().decode([KeyBinding].self, from: data), !dec.isEmpty {
             keyBindings = dec
@@ -431,7 +329,6 @@ final class TerminalController: ObservableObject {
                   "sidebarCollapsed","sidebarWidth","terminalPadding2","colorOverrides","keyBindings"] {
             d.removeObject(forKey: k)
         }
-        overrides = [:]
         restore()
         objectWillChange.send()
     }

@@ -34,6 +34,8 @@ struct SettingsRoot: View {
         .navigationSplitViewStyle(.automatic)
         .frame(minWidth: 780, minHeight: 560)
         .background(VisualEffectView(material: .windowBackground, blendingMode: .withinWindow))
+        // The Settings window follows the app theme too (dark/light materials + controls).
+        .preferredColorScheme(controller.theme.isDark ? .dark : .light)
     }
 }
 
@@ -43,7 +45,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general:    "General"
-        case .appearance: "Appearance"
+        case .appearance: "Theme"
         case .text:       "Text"
         case .terminal:   "Terminal"
             case .window:     "Window"
@@ -86,34 +88,34 @@ private struct GeneralPane: View {
     }
 }
 
-// MARK: - Appearance
+// MARK: - Theme
 private struct AppearancePane: View {
     @EnvironmentObject private var controller: TerminalController
+    @State private var filter = ""
 
-    private func colorBinding(_ key: TerminalController.OverrideKey) -> Binding<Color> {
-        Binding(
-            get: { Color(nsColor: controller.effectiveColor(key)) },
-            set: { controller.setOverride(key, NSColor($0)) }
-        )
+    private var filtered: [AppTheme] {
+        let q = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return AppTheme.all }
+        return AppTheme.all.filter { $0.name.lowercased().contains(q) || $0.slug.contains(q) }
     }
 
     var body: some View {
         Form {
-            Section("Theme") {
+            Section {
+                TextField("Filter \(AppTheme.all.count) themes…", text: $filter)
+                    .textFieldStyle(.roundedBorder)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 10) {
-                    ForEach(TerminalController.themes) { theme in
-                        ThemeCard(theme: theme, selected: controller.themeName == theme.name)
-                            .onTapGesture { controller.themeName = theme.name }
+                    ForEach(filtered) { theme in
+                        ThemeCard(theme: theme, selected: controller.themeName == theme.slug)
+                            .onTapGesture { controller.themeName = theme.slug }
                     }
                 }
                 .padding(.vertical, 4)
             }
 
-            Section("Colors") {
-                LabeledContent("Background") { ColorSwatches(selection: colorBinding(.bg)) }
-                LabeledContent("Text") { ColorSwatches(selection: colorBinding(.fg)) }
-                LabeledContent("Cursor") { ColorSwatches(selection: colorBinding(.caret)) }
-                LabeledContent("Selection") { ColorSwatches(selection: colorBinding(.selection)) }
+            // Kept from the old Appearance pane — drives the frosted-glass
+            // look of the terminal over the window vibrancy.
+            Section("Opacity") {
                 Slider(value: $controller.backgroundAlpha, in: 0.25...1, step: 0.05) {
                     Text("Background opacity")
                 } minimumValueLabel: {
@@ -121,8 +123,6 @@ private struct AppearancePane: View {
                 } maximumValueLabel: {
                     Image(systemName: "circle.fill")
                 }
-                Button("Reset theme colors") { controller.resetColors() }
-                    .controlSize(.small)
             }
 
             Section("Preview") {
@@ -135,48 +135,76 @@ private struct AppearancePane: View {
     }
 }
 
+/// One theme card: the theme's own background plus a strip of the ANSI colors
+/// the terminal will actually use (bright slots carry each theme's identity).
 private struct ThemeCard: View {
-    let theme: TerminalController.TerminalTheme
+    let theme: AppTheme
     let selected: Bool
+
     var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(Color(theme.bg))
-                .frame(width: 22, height: 22)
-                .overlay(Circle().stroke(Color(theme.fg).opacity(0.7), lineWidth: 1.5))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(theme.name).font(.subheadline.weight(.medium))
-                Text("preview").font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(Color(theme.fg))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color(nsColor: theme.background))
+                    .frame(width: 14, height: 14)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
+                Text(theme.name)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color(nsColor: theme.foreground))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            HStack(spacing: 3) {
+                ForEach(8..<14, id: \.self) { slot in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(nsColor: theme.ansiSwatchColors[slot]))
+                        .aspectRatio(1, contentMode: .fit)
+                }
+            }
         }
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(theme.bg).opacity(0.9))
+                .fill(Color(nsColor: theme.background))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(selected ? Color.primary : Color.clear, lineWidth: 2)
+                .stroke(selected ? Color(nsColor: theme.accent) : Color.primary.opacity(0.15),
+                        lineWidth: selected ? 2 : 1)
         )
         .contentShape(Rectangle())
     }
 }
 
+/// Live sample rendered with the active theme's palette — updates instantly
+/// with every theme/font change.
 private struct TerminalPreview: View {
     @EnvironmentObject private var controller: TerminalController
+
+    /// One ANSI-colored token run (slot = xterm color index).
+    private func tok(_ text: String, _ slot: Int) -> Text {
+        Text(text).foregroundColor(Color(nsColor: controller.theme.ansiSwatchColors[slot]))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("$ ls -la --color")
-                .font(Font.custom(controller.fontName, size: 13))
-            Text("drwxr-xr-x  12 user  staff   384 Aug 26 09:14 macterm")
-                .font(Font.custom(controller.fontName, size: 13))
+        let fg = Color(nsColor: controller.foregroundColor)
+        return VStack(alignment: .leading, spacing: 5) {
+            tok("~ ", 12) + tok("❯ ", 11) + Text("git status").foregroundColor(fg)
+            Text("On branch ").foregroundColor(fg)
+                + tok("main", 3)
+                + Text(", working tree ").foregroundColor(fg)
+                + tok("clean", 2)
+            tok("✓ ", 10)
+                + Text("themed by ").foregroundColor(fg)
+                + tok("NvChad/base46", 4)
+                + Text(" — ").foregroundColor(fg)
+                + tok(controller.theme.name, 5)
         }
+        .font(Font.custom(controller.fontName, size: 13))
+        .lineLimit(1)
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: controller.backgroundColor).opacity(1))
-        .foregroundColor(Color(nsColor: controller.foregroundColor))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: controller.theme.background)))
         .cornerRadius(8)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25)))
     }
@@ -292,49 +320,6 @@ private struct WindowPane: View {
     }
 }
 
-/// Inline color selection — no popover. A scrollable row of preset swatches;
-/// the selected one is outlined. Replaces `ColorPicker` so changing theme
-/// colors stays inside the Settings UI.
-private struct ColorSwatches: View {
-    @Binding var selection: Color
-    private let presets: [(name: String, color: Color)] = [
-        ("Terminal", Color(.sRGB, red: 0.07, green: 0.09, blue: 0.11, opacity: 1)),
-        ("Carbon",   Color(.sRGB, red: 0.10, green: 0.10, blue: 0.12, opacity: 1)),
-        ("Navy",     Color(.sRGB, red: 0.05, green: 0.07, blue: 0.20, opacity: 1)),
-        ("Slate",    Color(.sRGB, white: 0.22, opacity: 1)),
-        ("Fox",      Color(.sRGB, red: 0.20, green: 0.13, blue: 0.10, opacity: 1)),
-        ("Red",      Color(red: 0.78, green: 0.22, blue: 0.22)),
-        ("Orange",   Color(red: 0.85, green: 0.50, blue: 0.18)),
-        ("Yellow",   Color(red: 0.88, green: 0.80, blue: 0.22)),
-        ("Green",    Color(red: 0.25, green: 0.70, blue: 0.35)),
-        ("Blue",     Color(red: 0.30, green: 0.52, blue: 0.92)),
-        ("Purple",   Color(red: 0.60, green: 0.35, blue: 0.85)),
-        ("White",    Color.white),
-        ("Black",    Color.black),
-    ]
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(presets.enumerated()), id: \.offset) { _, p in
-                    Button { selection = p.color } label: {
-                        Circle()
-                            .fill(p.color)
-                            .frame(width: 18, height: 18)
-                            .overlay(
-                                Circle()
-                                    .stroke(selection == p.color ? Color.primary : Color.clear,
-                                            lineWidth: 2)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(p.name)
-                }
-            }
-            .padding(2)
-        }
-    }
-}
 
 // MARK: - Shortcuts
 private struct ShortcutsPane: View {

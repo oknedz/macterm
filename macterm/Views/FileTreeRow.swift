@@ -52,8 +52,9 @@ struct FolderRow: View {
     }
 
     private var rowBackground: Color {
-        if isActive { return Color.primary.opacity(0.14) }
-        return hover ? Color.white.opacity(0.06) : Color.clear
+        if isActive { return Color(nsColor: controller.accentColor).opacity(0.18) }
+        // primary-based washes adapt to dark/light themes automatically
+        return hover ? Color.primary.opacity(0.06) : Color.clear
     }
 }
 
@@ -77,7 +78,7 @@ private struct FileRow: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
-        .background(hover ? Color.white.opacity(0.06) : Color.clear)
+        .background(hover ? Color.primary.opacity(0.06) : Color.clear)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
         .onTapGesture(count: 2) { controller.openFile(node.url) }

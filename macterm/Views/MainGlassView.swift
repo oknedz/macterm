@@ -65,6 +65,10 @@ struct MainGlassView: View {
         
         // 2. Hide WindowConfigurator in the background so it takes ZERO layout space
         .background(WindowConfigurator())
+
+        // Theme drives the WHOLE app: window appearance (vibrancy materials,
+        // native controls, secondary text) flips dark/light with it.
+        .preferredColorScheme(controller.theme.isDark ? .dark : .light)
         
         .background(
             VisualEffectView(material: .underWindowBackground, blendingMode: .behindWindow)

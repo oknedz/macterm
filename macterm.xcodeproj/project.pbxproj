@@ -13,6 +13,7 @@
 		3650368B3E40CA7A5E49F28D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04B53AB2D28C432D7522C4FC /* SettingsView.swift */; };
 		3FBEB3863D5E36E76F2671FC /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99538287FE1C21FC28449238 /* Session.swift */; };
 		576B72EFF09F5CA1E92CC2F6 /* TerminalController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF167D93E451F821E5AE56FB /* TerminalController.swift */; };
+		64F99AB4AF65533098EBACB2 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F203BF511B0E5CA88868A8DE /* AppTheme.swift */; };
 		660E3796920A54DE7A5684A5 /* VisualEffectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494E40A06364EE54D47F14C6 /* VisualEffectView.swift */; };
 		76AC7752C77920006EFAF638 /* MacTermApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8E7BE19950BF9AE26202EB /* MacTermApp.swift */; };
 		A453F4937C118A9D21AC2992 /* TitleBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FFB5DFC145E5A73A83F1C2 /* TitleBar.swift */; };
@@ -22,6 +23,7 @@
 		C5ED995580F853415E4C9B8E /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A3879147056C3DB2BB608B54 /* SwiftTerm */; };
 		D3A3CC167926368451F7A4FE /* FileNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = D73896232BBEDFBBF73AC613 /* FileNode.swift */; };
 		D83E3DFC9019605CFB130975 /* WindowConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85D4574C7EB5B4E536BDA019 /* WindowConfigurator.swift */; };
+		D9188E67453094698AC2E74B /* NvChadThemes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAD70EE6C845EAD0DDA37A16 /* NvChadThemes.swift */; };
 		E93E68940773842D8B7FBB06 /* TerminalViewRepresentable.swift in Sources */ = {isa = PBXBuildFile; fileRef = C891BDA076057EC503658513 /* TerminalViewRepresentable.swift */; };
 /* End PBXBuildFile section */
 
@@ -37,12 +39,14 @@
 		99538287FE1C21FC28449238 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
 		A1349C9C08814B2AD910D161 /* MainGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainGlassView.swift; sourceTree = "<group>"; };
 		A78890FF345A1235ED3D6629 /* Sidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sidebar.swift; sourceTree = "<group>"; };
+		AAD70EE6C845EAD0DDA37A16 /* NvChadThemes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NvChadThemes.swift; sourceTree = "<group>"; };
 		B0CF42E3A1364AA254E2A2F6 /* EditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorView.swift; sourceTree = "<group>"; };
 		B2300DD60BB02906418A4DBD /* macterm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = macterm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C891BDA076057EC503658513 /* TerminalViewRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewRepresentable.swift; sourceTree = "<group>"; };
 		CF167D93E451F821E5AE56FB /* TerminalController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalController.swift; sourceTree = "<group>"; };
 		D73896232BBEDFBBF73AC613 /* FileNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileNode.swift; sourceTree = "<group>"; };
 		EAD9FF8C2B3C5E86A6B7E942 /* SwiftTermVendor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTermVendor; path = SwiftTermVendor; sourceTree = SOURCE_ROOT; };
+		F203BF511B0E5CA88868A8DE /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,7 +98,9 @@
 		5CB833E57A23AA988AFB8E88 /* Model */ = {
 			isa = PBXGroup;
 			children = (
+				F203BF511B0E5CA88868A8DE /* AppTheme.swift */,
 				D73896232BBEDFBBF73AC613 /* FileNode.swift */,
+				AAD70EE6C845EAD0DDA37A16 /* NvChadThemes.swift */,
 				99538287FE1C21FC28449238 /* Session.swift */,
 				CF167D93E451F821E5AE56FB /* TerminalController.swift */,
 			);
@@ -203,11 +209,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				64F99AB4AF65533098EBACB2 /* AppTheme.swift in Sources */,
 				C3FDBCBDC87D81341353C371 /* EditorView.swift in Sources */,
 				D3A3CC167926368451F7A4FE /* FileNode.swift in Sources */,
 				AB177C344228128FCACF307A /* FileTreeRow.swift in Sources */,
 				76AC7752C77920006EFAF638 /* MacTermApp.swift in Sources */,
 				A72F2EF0D6D4C7EFCCA49B6D /* MainGlassView.swift in Sources */,
+				D9188E67453094698AC2E74B /* NvChadThemes.swift in Sources */,
 				3FBEB3863D5E36E76F2671FC /* Session.swift in Sources */,
 				3650368B3E40CA7A5E49F28D /* SettingsView.swift in Sources */,
 				344F581AD9270985CEB04E51 /* Sidebar.swift in Sources */,
