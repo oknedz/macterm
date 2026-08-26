@@ -1,0 +1,19 @@
+# Xcode / macOS
+.DS_Store
+.AppleDouble
+build/
+DerivedData/
+*.xcuserstate
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+.swiftpm/xcode/xcuserdatad/
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+
+# Swift Package Manager build artifacts
+.build/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp

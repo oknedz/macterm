@@ -1,0 +1,26 @@
+name: macterm
+options:
+  bundleIdPrefix: com.zdenko.macterm
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+packages:
+  SwiftTerm:
+    path: SwiftTermVendor
+targets:
+  macterm:
+    type: application
+    platform: macOS
+    sources:
+      - path: macterm
+    info:
+      path: macterm/Info.plist
+    dependencies:
+      - package: SwiftTerm
+        product: SwiftTerm
+    settings:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zdenko.macterm
+        ENABLE_HARDENED_RUNTIME: false
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
