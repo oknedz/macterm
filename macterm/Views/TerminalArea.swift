@@ -20,12 +20,18 @@ struct TerminalArea: View {
             if case .editor(let fileURL) = session.kind {
                 return AnyView(
                     EditorView(url: fileURL, buffer: controller.editorBufferBinding(for: session.id))
+                        .id(session.id)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(controller.terminalPadding)
                 )
             }
+            // .id(session) anchors SwiftUI identity: without it, switching tabs
+            // swaps two identically-typed representables in place and
+            // updateNSView (appearance-only) keeps showing the previous
+            // session's terminal instead of mounting the new one.
             return AnyView(
                 TerminalViewRepresentable(sessionId: id, controller: controller)
+                    .id(id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: GlassMetrics.radius, style: .continuous))
                     .padding(controller.terminalPadding)
