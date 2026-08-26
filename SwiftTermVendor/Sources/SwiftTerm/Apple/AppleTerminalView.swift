@@ -4013,6 +4013,31 @@ extension TerminalView {
             displayBuffer.hasScrollback &&
             displayBuffer.lines.count > displayBuffer.rows
     }
+
+    /// Maps a point in window coordinates to the terminal cell it lands on
+    /// and returns the full text of that buffer row (scrollback-aware).
+    /// Public so host apps can implement click-on-path interactions.
+    /// Returns nil when the point falls outside the character grid.
+    public func hitTestCell (at point: NSPoint) -> (col: Int, row: Int, lineText: String)? {
+        let local = convert(point, from: nil)
+        return withTerminal { terminal in
+            let col = min (max (Int (local.x / cellDimension.width), 0), terminal.cols - 1)
+            let viewRow = min (max (Int ((bounds.height - local.y) / cellDimension.height), 0), terminal.rows - 1)
+            let displayBuffer = terminal.displayBuffer
+            let bufferRow = viewRow + displayBuffer.yDisp
+            guard bufferRow >= 0, bufferRow < displayBuffer.lines.count else { return nil }
+            let line = displayBuffer.lines[bufferRow]
+            var text = ""
+            for i in 0..<line.count {
+                let code = line.packedCode(at: i)
+                if let scalar = Unicode.Scalar(UInt32(clamping: code)) {
+                    text.unicodeScalars.append(scalar)
+                }
+            }
+            return (col, bufferRow, text)
+        }
+    }
+
     
     public func scroll (toPosition: Double)
     {

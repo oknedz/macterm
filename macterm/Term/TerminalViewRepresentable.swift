@@ -172,19 +172,56 @@ final class ResizableTerminalView: LocalProcessTerminalView {
         case "closePane":
             MainActor.assumeIsolated { controller?.closeFocusedPane() }
             return true
-        case "editorSave", "editorRevert":
-            MainActor.assumeIsolated { controller?.perform(actionId) }
-            return true
         default:
             return super.performKeyEquivalent(with: event)
         }
     }
 
     override func mouseDown(with event: NSEvent) {
+        // ⌘-click on a name in the OUTPUT (ls results, prompt paths…):
+        // resolve it against the session cwd and type the quoted absolute
+        // path at the cursor — lands right after a typed `cd `. Consumed so
+        // it does not start a selection drag. Plain clicks: focus + normal.
+        if event.modifierFlags.contains(.command),
+           let hit = hitTestCell(at: event.locationInWindow),
+           let word = pathWord(at: hit.col, in: hit.lineText),
+           let resolved = resolvedPath(word) {
+            send(txt: " '\(resolved)'")
+            return
+        }
         MainActor.assumeIsolated {
             if let id = sessionId { controller?.focus(id) }
         }
         super.mouseDown(with: event)
+    }
+
+    /// Expand the word under `col` over path-ish characters.
+    private func pathWord(at col: Int, in line: String) -> String? {
+        let allowed: Set<Character> = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-~/")
+        let chars = Array(line)
+        guard col < chars.count, allowed.contains(chars[col]) else { return nil }
+        var start = col, end = col
+        while start > 0, allowed.contains(chars[start - 1]) { start -= 1 }
+        while end + 1 < chars.count, allowed.contains(chars[end + 1]) { end += 1 }
+        let word = String(chars[start...end])
+        return word.count > 1 ? word : nil
+    }
+
+    /// Resolve a word from the screen to an existing absolute path
+    /// (absolute, ~-prefixed, or relative to the session's cwd).
+    private func resolvedPath(_ word: String) -> String? {
+        let url: URL
+        if word.hasPrefix("/") {
+            url = URL(fileURLWithPath: word)
+        } else if word.hasPrefix("~") {
+            url = URL(fileURLWithPath: NSString(string: word).expandingTildeInPath)
+        } else {
+            let cwd = MainActor.assumeIsolated { controller?.activeCwd } ?? NSHomeDirectory()
+            url = URL(fileURLWithPath: cwd).appendingPathComponent(word)
+        }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
+        return url.path
     }
 
     /// Clears the visible screen and the SwiftTerm scrollback so ⌘K behaves
