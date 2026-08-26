@@ -54,6 +54,9 @@ struct Sidebar: View {
         }
         .frame(maxHeight: .infinity)
         .onAppear { if roots.isEmpty { reloadRoots() } }
+        .onReceive(NotificationCenter.default.publisher(for: .reloadFileTree)) { _ in
+            reloadRoots()
+        }
     }
 
     private var query: String {

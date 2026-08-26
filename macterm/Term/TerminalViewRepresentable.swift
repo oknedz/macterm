@@ -153,18 +153,27 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let binding = MainActor.assumeIsolated {
+        // View level runs BEFORE menu processing, so terminal-scoped commands
+        // win even when system items share the combo (e.g. ⌘W vs Close Window).
+        let hit: KeyBinding? = MainActor.assumeIsolated {
             controller?.keyBindings.first(where: { bindingMatches(event, $0) })
         }
-        guard let binding else {
-            return super.performKeyEquivalent(with: event)
+        guard let binding = hit else { return super.performKeyEquivalent(with: event) }
+        let actionId: String = MainActor.assumeIsolated {
+            controller?.actionId(for: binding) ?? binding.id
         }
-        switch binding.id {
-        case "clear":
-            clearTerminalScreen()
+        switch actionId {
+        case "clearTerminal", "clearScrollbackOnly":
+            MainActor.assumeIsolated {
+                if actionId == "clearTerminal" { send(txt: "clear\n") }
+                clearScrollback()
+            }
             return true
-        case "closeTab":
-            controller?.closeFocusedPane()
+        case "closePane":
+            MainActor.assumeIsolated { controller?.closeFocusedPane() }
+            return true
+        case "editorSave", "editorRevert":
+            MainActor.assumeIsolated { controller?.perform(actionId) }
             return true
         default:
             return super.performKeyEquivalent(with: event)

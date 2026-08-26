@@ -98,7 +98,7 @@ struct HighlightingEditor: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.tv = tv
         coordinator.parent = self
-        context.coordinator.syncTheme()
+        _ = context.coordinator.syncTheme()
         coordinator.apply(text)
         return scroll
     }

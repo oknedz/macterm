@@ -26,6 +26,11 @@ struct MacTermApp: App {
                 Divider()
                 commandButton("nextTab")
                 commandButton("prevTab")
+                commandButton("alternateTab")
+                commandButton("newTabInCwd")
+                Divider()
+                commandButton("moveTabLeft")
+                commandButton("moveTabRight")
                 Divider()
                 commandButton("splitRight")
                 commandButton("splitDown")
@@ -34,25 +39,48 @@ struct MacTermApp: App {
                 commandButton("focusUp")
                 commandButton("focusDown")
                 commandButton("focusRight")
+                commandButton("focusNextLeaf")
+                commandButton("focusPrevLeaf")
+                Divider()
+                commandButton("zoomPaneToggle")
+                commandButton("closeOtherPanes")
+            }
+            CommandMenu("Editor") {
+                commandButton("editorSave")
+                commandButton("editorRevert")
             }
             CommandGroup(after: .windowList) {
                 commandButton("toggleSidebar")
+                commandButton("reloadFileTree")
                 commandButton("clearTerminal")
+                commandButton("clearScrollbackOnly")
+                Divider()
+                commandButton("themeCycleNext")
+                commandButton("themeCyclePrev")
                 Divider()
                 commandButton("fontBigger")
                 commandButton("fontSmaller")
                 commandButton("fontReset")
+                Divider()
+                commandButton("copyActivePath")
+                commandButton("toggleMouseReporting")
+                commandButton("toggleOptionAsMeta")
+                Divider()
+                commandButton("minimizeWindow")
                 Divider()
                 ForEach(1...9, id: \.self) { n in
                     commandButton("goToTab.\(n)")
                 }
             }
             CommandGroup(replacing: .pasteboard) {
+                commandButton("undo")
+                commandButton("redo")
+                commandButton("cut")
                 commandButton("copy")
                 commandButton("paste")
+                commandButton("selectAll")
             }
             // User-defined combos (Settings → Keys → Custom): hidden items so
-            // their shortcuts fire globally like built-ins.
             CommandGroup(after: .windowList) {
                 ForEach(controller.customBindings) { b in
                     Button(controller.title(for: b)) { controller.perform(b.action ?? b.id) }

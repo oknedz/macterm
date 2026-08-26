@@ -135,6 +135,12 @@ private struct TabPill: View {
                 ? Color(nsColor: controller.accentColor).opacity(0.22)
                 : (hover ? Color.primary.opacity(0.10) : Color.primary.opacity(0.05))
         )
+        // Accent border on the ACTIVE tab — unambiguous location indicator.
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(active ? Color(nsColor: controller.accentColor) : .clear,
+                        lineWidth: active ? 1.5 : 0)
+        )
         .foregroundStyle(.primary)
         .cornerRadius(6)
         .onHover { hover = $0 }

@@ -90,7 +90,18 @@ indirect enum PaneNode: Identifiable {
             }
         }
     }
+
+    /// The leaf whose session is `id` (for pane zoom rendering).
+    func leaf(containing id: UUID) -> PaneNode? {
+        switch self {
+        case .terminal(let s):
+            return s == id ? self : nil
+        case .split(_, _, let a, let b):
+            return a.leaf(containing: id) ?? b.leaf(containing: id)
+        }
+    }
 }
+
 
 /// One top-level tab: a self-contained split tree.
 struct WorkspaceTab: Identifiable {
@@ -99,6 +110,8 @@ struct WorkspaceTab: Identifiable {
     var layout: PaneNode
     /// Optional accent color shown as a dot on the tab pill.
     var color: NSColor? = nil
+    /// Zoom: render only the focused pane, full-size (toggle).
+    var zoomFocused: Bool = false
 }
 
 /// In-memory text buffer backing an in-app editor session. Stored in
@@ -108,6 +121,11 @@ struct WorkspaceTab: Identifiable {
 struct EditorBuffer {
     var content: String
     var original: String
+}
+
+extension Notification.Name {
+    /// Ask the sidebar to rebuild its roots (Keys → Reload File Tree).
+    static let reloadFileTree = Notification.Name("macterm.reloadFileTree")
 }
 
 @MainActor
@@ -146,6 +164,16 @@ final class TerminalController: ObservableObject {
     @Published var backspaceSendsControlH: Bool = false { didSet { persist() } }
     @Published var ansi256Raw: String = "base16Lab" { didSet { persist() } }
 
+    /// Rebindable keyboard shortcuts for app commands (persisted).
+    @Published var keyBindings: [KeyBinding] = TerminalController.defaultKeyBindings() { didSet { persist() } }
+    /// Expanded folder paths for the file tree. Persisted, so the tree looks
+    /// identical after relaunches, tab switches and sidebar toggles.
+    @Published var expandedPaths: Set<String> = [] { didSet { persistExpandedPaths() } }
+
+    func setExpanded(_ path: String, _ expanded: Bool) {
+        if expanded { expandedPaths.insert(path) } else { expandedPaths.remove(path) }
+    }
+
     // MARK: - General
     @Published var shellPath: String = { ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh" }() { didSet { persist() } }
     /// Startup directory for new tabs. No hard-coded project paths — new tabs
@@ -157,9 +185,6 @@ final class TerminalController: ObservableObject {
     // MARK: - Window
     @Published var sidebarWidth: Double = 260 { didSet { persist() } }
     @Published var terminalPadding: Double = 4 { didSet { persist() } }
-    /// Rebindable keyboard shortcuts for app commands (persisted).
-    @Published var keyBindings: [KeyBinding] = TerminalController.defaultKeyBindings() { didSet { persist() } }
-
 
     let favorites: [URL] = [
         FileManager.default.homeDirectoryForCurrentUser
@@ -283,9 +308,36 @@ final class TerminalController: ObservableObject {
         CommandSpec(id: "fontSmaller",  group: "View",   title: "Font Size Down",     nvim: "", key: "-", mods: .command),
         CommandSpec(id: "fontReset",    group: "View",   title: "Reset Font Size",    nvim: "", key: "0", mods: .command),
 
-        // Edit
-        CommandSpec(id: "copy",         group: "Edit",   title: "Copy",               nvim: "<C-c> %y+", key: "c", mods: .command),
-        CommandSpec(id: "paste",        group: "Edit",   title: "Paste",              nvim: "p     \"+p", key: "v", mods: .command),
+
+        // Layout & focus extras
+        CommandSpec(id: "moveTabLeft",   group: "Tabs",  title: "Move Tab Left",      nvim: ":tabm -1",  key: "[", mods: [.control, .option]),
+        CommandSpec(id: "moveTabRight",  group: "Tabs",  title: "Move Tab Right",     nvim: ":tabm +1",  key: "]", mods: [.control, .option]),
+        CommandSpec(id: "alternateTab",  group: "Tabs",  title: "Alternate Tab",      nvim: "<leader>bb last buffer", key: "0", mods: [.command, .option]),
+        CommandSpec(id: "newTabInCwd",   group: "Tabs",  title: "New Tab in CWD",     nvim: ":tcd | enew", key: "n", mods: [.command, .option]),
+        CommandSpec(id: "focusNextLeaf", group: "Panes", title: "Cycle Pane Forward", nvim: "<C-w>w", key: "]", mods: [.command, .shift]),
+        CommandSpec(id: "focusPrevLeaf", group: "Panes", title: "Cycle Pane Backward",nvim: "<C-w>W", key: "[", mods: [.command, .shift]),
+        CommandSpec(id: "zoomPaneToggle",group: "Panes", title: "Zoom Focused Pane",  nvim: "<C-w>_ | only", key: "z", mods: [.command, .option]),
+        CommandSpec(id: "closeOtherPanes", group: "Panes", title: "Close Other Panes", nvim: "<C-w>o :only", key: "w", mods: [.command, .option]),
+
+        // Theme / tree / terminal engine
+        CommandSpec(id: "themeCycleNext", group: "View", title: "Next Theme",         nvim: "<leader>th themes", key: "t", mods: [.command, .option]),
+        CommandSpec(id: "themeCyclePrev", group: "View", title: "Previous Theme",     nvim: "<leader>th reverse", key: "t", mods: [.command, .option, .shift]),
+        CommandSpec(id: "reloadFileTree", group: "View", title: "Reload File Tree",   nvim: "<C-l> NvimTreeRefresh", key: "e", mods: [.command, .shift]),
+        CommandSpec(id: "toggleMouseReporting", group: "View", title: "Toggle Mouse Reporting", nvim: "", key: "m", mods: [.command, .option]),
+        CommandSpec(id: "toggleOptionAsMeta",  group: "View", title: "Toggle Option as Meta",   nvim: "", key: "o", mods: [.command, .option]),
+        CommandSpec(id: "clearScrollbackOnly",  group: "View", title: "Clear Scrollback Only",  nvim: "", key: "k", mods: [.command, .option]),
+        CommandSpec(id: "copyActivePath", group: "View",    title: "Copy Active Path",   nvim: "<leader>pa path", key: "c", mods: [.command, .option]),
+        CommandSpec(id: "minimizeWindow", group: "View",    title: "Minimize Window",    nvim: "", key: "m", mods: .command),
+
+        // Editor
+        CommandSpec(id: "editorSave",   group: "Editor", title: "Save File",          nvim: "<leader>w / <C-s>", key: "s", mods: .command),
+        CommandSpec(id: "editorRevert", group: "Editor", title: "Revert File",        nvim: ":e!",       key: "r", mods: [.command, .option]),
+
+        // More editing
+        CommandSpec(id: "cut",          group: "Edit",   title: "Cut",                nvim: "+x", key: "x", mods: .command),
+        CommandSpec(id: "selectAll",    group: "Edit",   title: "Select All",         nvim: "ggVG", key: "a", mods: .command),
+        CommandSpec(id: "undo",         group: "Edit",   title: "Undo",               nvim: "u",     key: "z", mods: .command),
+        CommandSpec(id: "redo",         group: "Edit",   title: "Redo",               nvim: "<C-r>", key: "z", mods: [.command, .shift]),
 
         // Go to tab ({n}gt)
     ] + (1...9).map { n in
@@ -346,13 +398,21 @@ final class TerminalController: ObservableObject {
         sidebarCollapsed       = d.object(forKey: "sidebarCollapsed") as? Bool ?? sidebarCollapsed
         sidebarWidth           = d.object(forKey: "sidebarWidth") as? Double ?? sidebarWidth
         terminalPadding        = d.object(forKey: "terminalPadding2") as? Double ?? terminalPadding
+        if let paths = d.array(forKey: "expandedPaths") as? [String] {
+            expandedPaths = Set(paths)
+        }
         if let data = d.data(forKey: "keyBindings"),
            let dec = try? JSONDecoder().decode([KeyBinding].self, from: data), !dec.isEmpty {
-            // Merge: keep the user's saved bindings, add defaults for catalog
-            // entries that didn't exist when they were saved.
-            let have = Set(dec.map(\.id))
-            keyBindings = dec + Self.commandCatalog
-                .filter { !have.contains($0.id) }
+            // Pre-catalog ids → current ids, then merge with new defaults.
+            let legacy: [String: String] = ["clear": "clearTerminal", "closeTab": "closePane"]
+            var migrated = dec.map { b in
+                guard let newId = legacy[b.id] else { return b }
+                return KeyBinding(id: newId, key: b.key, modifiers: b.modifiers)
+            }
+            var seen = Set<String>()
+            migrated.removeAll { !seen.insert($0.id).inserted }
+            keyBindings = migrated + Self.commandCatalog
+                .filter { cmd in !seen.contains(cmd.id) }
                 .map { KeyBinding(id: $0.id, key: $0.key, modifiers: Int($0.mods.rawValue)) }
         } else {
             keyBindings = TerminalController.defaultKeyBindings()
@@ -382,6 +442,10 @@ final class TerminalController: ObservableObject {
         if let data = try? JSONEncoder().encode(keyBindings) {
             d.set(data, forKey: "keyBindings")
         }
+    }
+
+    private func persistExpandedPaths() {
+        UserDefaults.standard.set(Array(expandedPaths), forKey: "expandedPaths")
     }
 
     func resetAllSettings() {
@@ -658,6 +722,36 @@ final class TerminalController: ObservableObject {
         case "fontReset":     fontSize = 13
         case "copy":          NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
         case "paste":         NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        case "moveTabLeft":   moveTab(-1)
+        case "moveTabRight":  moveTab(1)
+        case "alternateTab":
+            if let alt = tabs.first(where: { $0.id != activeTabId }) { activate(alt) }
+        case "newTabInCwd":   newTab(cwd: activeCwd)
+        case "focusNextLeaf": cycleLeaf(1)
+        case "focusPrevLeaf": cycleLeaf(-1)
+        case "zoomPaneToggle": toggleZoom()
+        case "closeOtherPanes": closeOtherPanes()
+        case "themeCycleNext": cycleTheme(1)
+        case "themeCyclePrev": cycleTheme(-1)
+        case "reloadFileTree":
+            NotificationCenter.default.post(name: .reloadFileTree, object: nil)
+        case "toggleMouseReporting": allowMouseReporting.toggle()
+        case "toggleOptionAsMeta":   optionAsMetaKey.toggle()
+        case "clearScrollbackOnly":
+            views[focusedSessionId]?.clearScrollback()
+        case "copyActivePath":
+            if let cwd = activeCwd {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(cwd, forType: .string)
+            }
+        case "minimizeWindow":
+            NSApp.sendAction(#selector(NSWindow.performMiniaturize(_:)), to: nil, from: nil)
+        case "editorSave":   saveActiveEditor()
+        case "editorRevert": revertActiveEditor()
+        case "cut":          NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+        case "selectAll":    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+        case "undo":         NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+        case "redo":         NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
         default:
             if id.hasPrefix("goToTab."), let n = Int(id.dropFirst("goToTab.".count)) {
                 goToTab(n)
@@ -676,11 +770,79 @@ final class TerminalController: ObservableObject {
         activate(tabs[n - 1])
     }
 
+    /// Focus a tab and its first leaf (shared by cycle/go-to/alternate).
     private func activate(_ tab: WorkspaceTab) {
         activeTabId = tab.id
         focusedSessionId = tab.layout.firstLeaf ?? focusedSessionId
     }
 
+    // MARK: - Command implementations
+
+    /// The action a binding triggers (custom bindings carry their own).
+    func actionId(for binding: KeyBinding) -> String { binding.action ?? binding.id }
+
+    private func moveTab(_ step: Int) {
+        guard let i = tabs.firstIndex(where: { $0.id == activeTabId }) else { return }
+        let j = i + step
+        guard tabs.indices.contains(j) else { return }
+        tabs.swapAt(i, j)
+    }
+
+    /// The previously-active tab (`<leader>bb` alternate-buffer analog).
+    private var alternateTab: WorkspaceTab? {
+        tabs.first { $0.id != activeTabId } // simplest stable pick: first other tab
+    }
+
+    private func cycleLeaf(_ step: Int) {
+        guard let tab = tabs.first(where: { $0.id == activeTabId }) else { return }
+        let leaves = tab.layout.sessionIds
+        guard let i = leaves.firstIndex(of: focusedSessionId), leaves.count > 1 else { return }
+        focusedSessionId = leaves[(i + step + leaves.count) % leaves.count]
+    }
+
+    private func toggleZoom() {
+        guard let i = tabs.firstIndex(where: { $0.id == activeTabId }) else { return }
+        tabs[i].zoomFocused.toggle()
+    }
+
+    /// `<C-w>o` — keep only the focused pane in the active tab.
+    private func closeOtherPanes() {
+        guard let ti = tabs.firstIndex(where: { $0.id == activeTabId }),
+              focusedSessionId == tabs[ti].layout.firstLeaf || true else { return }
+        let others = tabs[ti].layout.sessionIds.filter { $0 != focusedSessionId }
+        guard !others.isEmpty else { return }
+        removeSessions(others)
+        tabs[ti].layout = .terminal(focusedSessionId)
+        tabs[ti].zoomFocused = false
+    }
+
+    private func cycleTheme(_ step: Int) {
+        let slugs = AppTheme.all.map(\.slug)
+        guard let i = slugs.firstIndex(of: themeName) else { return }
+        themeName = slugs[(i + step + slugs.count) % slugs.count]
+    }
+
+    /// Write the focused editor session's buffer back to disk.
+    func saveActiveEditor() {
+        guard let s = sessions.first(where: { $0.id == focusedSessionId }),
+              case .editor(let url) = s.kind,
+              var buf = editorBuffers[s.id] else { return }
+        do {
+            try buf.content.write(to: url, atomically: true, encoding: .utf8)
+            buf.original = buf.content
+            editorBuffers[s.id] = buf
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    /// Reload the focused editor file from disk.
+    func revertActiveEditor() {
+        guard let s = sessions.first(where: { $0.id == focusedSessionId }),
+              case .editor(let url) = s.kind else { return }
+        let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        editorBuffers[s.id] = EditorBuffer(content: text, original: text)
+    }
     enum FocusDirection { case left, right, up, down }
 
     /// Move focus across the split tree like nvim's `<C-w>h/j/k/l`: cross the

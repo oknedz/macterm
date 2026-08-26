@@ -4,11 +4,15 @@ struct TerminalArea: View {
     @EnvironmentObject private var controller: TerminalController
 
     var body: some View {
-        if let tab = controller.tabs.first(where: { $0.id == controller.activeTabId }) {
-            render(tab.layout)
-        } else {
-            EmptyView()
+        guard let tab = controller.tabs.first(where: { $0.id == controller.activeTabId }) else {
+            return AnyView(EmptyView())
         }
+        // Zoomed tab: render ONLY the focused pane, full-size (<C-w>o analog).
+        if tab.zoomFocused,
+           let leaf = tab.layout.leaf(containing: controller.focusedSessionId) {
+            return AnyView(render(leaf))
+        }
+        return AnyView(render(tab.layout))
     }
 
     private func render(_ node: PaneNode) -> AnyView {

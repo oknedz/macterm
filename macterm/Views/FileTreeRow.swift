@@ -6,12 +6,13 @@ import AppKit
 struct FolderRow: View {
     @ObservedObject var node: FileNode
     @EnvironmentObject private var controller: TerminalController
-    @State private var expanded = false
     @State private var hover = false
 
-    private var isActive: Bool {
-        guard let cwd = controller.activeCwd else { return false }
-        return node.url.path == cwd
+    /// Expansion lives in the PERSISTED controller set (not local state), so
+    /// the tree survives sidebar toggles, tab switches and relaunches.
+    private var expanded: Bool {
+        get { controller.expandedPaths.contains(node.url.standardizedFileURL.path) }
+        set { controller.setExpanded(node.url.standardizedFileURL.path, newValue) }
     }
 
     var body: some View {
@@ -30,8 +31,9 @@ struct FolderRow: View {
             .background(rowBackground)
             .contentShape(Rectangle())
             .onTapGesture {
-                expanded.toggle()
-                if expanded { node.loadChildren() }
+                // Persisted flip — no local state, so it survives everything.
+                controller.setExpanded(node.url.standardizedFileURL.path, !expanded)
+                if !expanded { node.loadChildren() }
             }
             .highPriorityGesture(
                 TapGesture().modifiers(.command).onEnded {
@@ -52,7 +54,9 @@ struct FolderRow: View {
     }
 
     private var rowBackground: Color {
-        if isActive { return Color(nsColor: controller.accentColor).opacity(0.18) }
+        if controller.activeCwd == node.url.path {
+            return Color(nsColor: controller.accentColor).opacity(0.18)
+        }
         // primary-based washes adapt to dark/light themes automatically
         return hover ? Color.primary.opacity(0.06) : Color.clear
     }
