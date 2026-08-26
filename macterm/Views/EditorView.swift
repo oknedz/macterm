@@ -125,28 +125,29 @@ struct HighlightingEditor: NSViewRepresentable {
             _ = highlighter?.setTheme(to: "oceanic-next")
         }
 
-        /// Push terminal appearance (bg/opacity, font, caret, selection) onto the view.
-        func applyAppearance(_ tv: NSTextView) {
-            guard let c = parent?.controller else { return }
-            tv.backgroundColor = c.backgroundColor
-            tv.isOpaque = c.backgroundAlpha >= 1
-            tv.drawsBackground = true
-            tv.font = c.font
-            tv.insertionPointColor = c.caretColor
-            tv.selectedTextAttributes = [.backgroundColor: c.selectionColor]
-        }
+    /// Push terminal appearance (bg, font, caret, selection) onto the view.
+    /// @MainActor: touches NSView/NSTextView properties; all callers already
+    /// run on the main thread (SwiftUI representable + AppKit delegate).
+    @MainActor func applyAppearance(_ tv: NSTextView) {
+        guard let c = parent?.controller else { return }
+        tv.backgroundColor = c.backgroundColor
+        tv.drawsBackground = true
+        tv.font = c.font
+        tv.insertionPointColor = c.caretColor
+        tv.selectedTextAttributes = [.backgroundColor: c.selectionColor]
+    }
 
         /// Re-highlight `text` (oceanic-next token colors) while forcing the
         /// app font and stripping any per-token background so the terminal's
         /// background/opacity shows through.
-        func apply(_ text: String) {
+        @MainActor func apply(_ text: String) {
             guard let tv = tv else { return }
             let selected = tv.selectedRanges
             if let lang = parent?.language,
                let attr = highlighter?.highlight(text, as: lang) {
                 let themed = NSMutableAttributedString(attributedString: attr)
                 let full = NSRange(location: 0, length: themed.length)
-                if let f = parent?.controller?.font {
+                if let f = parent?.controller.font {
                     themed.addAttribute(.font, value: f, range: full)
                 }
                 themed.removeAttribute(.backgroundColor, range: full)
@@ -166,7 +167,7 @@ struct HighlightingEditor: NSViewRepresentable {
                let attr = highlighter?.highlight(newText, as: lang) {
                 let themed = NSMutableAttributedString(attributedString: attr)
                 let full = NSRange(location: 0, length: themed.length)
-                if let f = parent?.controller?.font {
+                if let f = parent?.controller.font {
                     themed.addAttribute(.font, value: f, range: full)
                 }
                 themed.removeAttribute(.backgroundColor, range: full)
