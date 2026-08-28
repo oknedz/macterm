@@ -1,8 +1,8 @@
 {
   "name": "macterm",
-  "vault": "/Users/zdenkovasic/Documents/CODING/macterm",
-  "tasks": "/Users/zdenkovasic/Documents/CODING/macterm/task",
+  "vault": "/Users/zdenkovasic/MacTerm",
+  "tasks": "/Users/zdenkovasic/MacTerm/task",
   "context": {
-    "session": "/Users/zdenkovasic/Documents/CODING/macterm/project-brain/SESSION.md"
+    "session": "/Users/zdenkovasic/MacTerm/project-brain/SESSION.md"
   }
 }

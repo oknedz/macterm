@@ -1,0 +1,24 @@
+{
+  "originHash" : "033b8bc0826ab56ae1089d9c242e0062b291aa3568072e3b518a0f520fa94a15",
+  "pins" : [
+    {
+      "identity" : "highlightr",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/raspu/Highlightr",
+      "state" : {
+        "branch" : "master",
+        "revision" : "da9bb2e4604da001f1d1a1adaa55f6a38509b405"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
+        "version" : "1.7.0"
+      }
+    }
+  ],
+  "version" : 3
+}
