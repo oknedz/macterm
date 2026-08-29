@@ -87,9 +87,11 @@ struct HighlightingEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         scroll.hasVerticalScroller = true
-        let old = scroll.documentView as! NSTextView
-        let tv = NSTextView()
-        tv.textContainer = old.textContainer
+        // Configure the scrollable text view's own document view directly
+        // (reusing the scroll view's laid-out text container) instead of
+        // swapping in a bare NSTextView, which had no resizing flags and
+        // rendered into a zero-height frame — the blank-editor bug.
+        guard let tv = scroll.documentView as? NSTextView else { return scroll }
         tv.isEditable = true
         tv.isRichText = true
         tv.allowsUndo = true
@@ -97,7 +99,10 @@ struct HighlightingEditor: NSViewRepresentable {
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticSpellingCorrectionEnabled = false
         tv.textContainerInset = NSSize(width: 6, height: 6)
-        scroll.documentView = tv
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.heightTracksTextView = false
 
         let coordinator = context.coordinator
         coordinator.tv = tv

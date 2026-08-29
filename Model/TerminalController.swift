@@ -172,6 +172,8 @@ final class TerminalController: ObservableObject {
     @Published var focusedSessionId: UUID = UUID()
     @Published var sidebarCollapsed: Bool = false { didSet { persist() } }
     @Published var showAgentPanel: Bool = false { didSet { persist() } }
+    /// User-assigned ⌘-number hotkeys for tabs, keyed by tab id (1–9).
+    @Published var tabHotkeys: [UUID: Int] = [:] { didSet { persist() } }
 
     /// Per-editor-session text buffers, keyed by `Session.id`. Lives in the
     /// model (not the view) so switching tabs preserves each file's content.
@@ -579,6 +581,14 @@ final class TerminalController: ObservableObject {
         closeOnExit            = d.object(forKey: "closeOnExit") as? Bool ?? closeOnExit
         sidebarCollapsed       = d.object(forKey: "sidebarCollapsed") as? Bool ?? sidebarCollapsed
         showAgentPanel         = d.object(forKey: "showAgentPanel") as? Bool ?? showAgentPanel
+        // Persisted tab hotkeys (UUID → number), stored as [String:Int].
+        if let raw = d.dictionary(forKey: "tabHotkeys") as? [String: Int] {
+            var map: [UUID: Int] = [:]
+            for (k, v) in raw where v >= 1 && v <= 9 {
+                if let id = UUID(uuidString: k) { map[id] = v }
+            }
+            tabHotkeys = map
+        }
         liquidGlass            = (d.object(forKey: "liquidGlass") as? Bool) ?? true
         sidebarWidth           = d.object(forKey: "sidebarWidth") as? Double ?? sidebarWidth
         terminalPadding        = d.object(forKey: "terminalPadding2") as? Double ?? terminalPadding
@@ -648,6 +658,9 @@ final class TerminalController: ObservableObject {
         if let data = try? JSONEncoder().encode(keyBindings) {
             d.set(data, forKey: "keyBindings")
         }
+        // Tab hotkeys: UUID keys → numbers, persisted as [String:Int].
+        d.set(tabHotkeys.reduce(into: [String: Int]()) { $0[$1.key.uuidString] = $1.value },
+              forKey: "tabHotkeys")
     }
 
     private func persistExpandedPaths() {
@@ -765,6 +778,11 @@ final class TerminalController: ObservableObject {
             guard let idx = self.tabs.firstIndex(where: { $0.id == id }) else { return }
             self.tabs[idx].color = color
         }
+    }
+
+    /// Assign (or clear, with `n == nil`) a ⌘-number hotkey for a tab.
+    func setTabHotkey(_ tabId: UUID, _ n: Int?) {
+        if let n { tabHotkeys[tabId] = n } else { tabHotkeys.removeValue(forKey: tabId) }
     }
 
     /// Called when a shell exits; honors the "close on exit" preference.
@@ -1048,6 +1066,12 @@ final class TerminalController: ObservableObject {
     }
 
     func goToTab(_ n: Int) {
+        // A user-assigned hotkey wins over positional targeting.
+        if let id = tabHotkeys.first(where: { $0.value == n })?.key,
+           let tab = tabs.first(where: { $0.id == id }) {
+            activate(tab)
+            return
+        }
         guard tabs.indices.contains(n - 1) else { return }
         activate(tabs[n - 1])
     }

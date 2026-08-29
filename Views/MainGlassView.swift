@@ -49,37 +49,36 @@ struct MainGlassView: View {
             // Top bar: tabs inline with the traffic lights
             TitleBar()
              
-            ZStack(alignment: .trailing) {
-                // Main content area - sidebar + terminal (terminal never shrinks)
-                HStack(spacing: 0) {
+            // Content row: terminal + sidebar + AI panel as HStack siblings with
+            // mutually exclusive frames (no occlusion). Details below.
+            HStack(spacing: GlassMetrics.gap) {
+                if !controller.sidebarCollapsed {
                     Sidebar()
-                        .frame(width: controller.sidebarCollapsed ? 0 : controller.sidebarWidth)
-                        .opacity(controller.sidebarCollapsed ? 0 : 1)
+                        .frame(width: controller.sidebarWidth)
+                        .frame(maxHeight: .infinity)
                         .glassPanel(glass: controller.liquidGlass)
                         .clipped()
-                        .padding(.trailing, controller.sidebarCollapsed ? 0 : GlassMetrics.gap)
-                    
-                    TerminalArea()
-                        .glassPanel(glass: controller.liquidGlass)
                         .layoutPriority(1)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
-                // Agent Panel - Full height overlay on the right
+
+                TerminalArea()
+                    .glassPanel(glass: controller.liquidGlass)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(0)
+
                 if controller.showAgentPanel {
                     AgentPanelMain()
                         .glassPanel(glass: controller.liquidGlass)
                         .frame(width: 420)
                         .frame(maxHeight: .infinity)
-                        .padding(.trailing, GlassMetrics.margin)
-                        .padding(.top, 6)
-                        .padding(.bottom, GlassMetrics.margin)
+                        .padding(.vertical, GlassMetrics.margin)
+                        .layoutPriority(1)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
-                        .zIndex(1)
                 }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: controller.showAgentPanel)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: controller.sidebarCollapsed)
             .padding(.top, 6)
             .padding(.horizontal, GlassMetrics.margin)
             .padding(.bottom, GlassMetrics.margin)
@@ -87,7 +86,6 @@ struct MainGlassView: View {
         .ignoresSafeArea(edges: .top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(WindowConfigurator())
-        
         .preferredColorScheme(controller.theme.isDark ? .dark : .light)
     }
 }

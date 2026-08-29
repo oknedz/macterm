@@ -1,12 +1,19 @@
 import SwiftUI
 import AppKit
-/// Recursive folder row: a plain tap expands/collapses the tree; a ⌘-tap
-/// `cd`s the active terminal into that directory (bidirectional — the shell
-/// reports its cwd back and the matching row highlights).
+/// Recursive folder row: a plain tap expands/collapses the tree (and selects the
+/// node so new files land in the right place); a ⌘-tap `cd`s the active terminal
+/// into that directory (bidirectional — the shell reports its cwd back and the
+/// matching row highlights).
 struct FolderRow: View {
     @ObservedObject var node: FileNode
     @EnvironmentObject private var controller: TerminalController
     @State private var hover = false
+    /// Called when this node becomes the selected/focused tree node.
+    var onSelect: ((URL) -> Void)? = nil
+    /// Create a file (isFolder = false) or folder (true) inside this directory.
+    var onNew: ((URL, Bool) -> Void)? = nil
+    /// Permanently remove this node (in-place tree removal, no full reload).
+    var onDelete: ((URL) -> Void)? = nil
 
     /// Expansion lives in the PERSISTED controller set (not local state), so
     /// the tree survives sidebar toggles, tab switches and relaunches.
@@ -24,7 +31,7 @@ struct FolderRow: View {
                 Image(systemName: expanded ? "folder.fill" : "folder")
                     .foregroundStyle(Color(nsColor: controller.theme.hierarchyColor(level: node.depth)))
                 Text(node.name).lineLimit(1).font(.system(size: controller.fontSize))
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
@@ -37,6 +44,7 @@ struct FolderRow: View {
                 let willExpand = !expanded
                 controller.setExpanded(node.url.standardizedFileURL.path, willExpand)
                 if willExpand { node.loadChildren() }
+                onSelect?(node.url)
             }
             .highPriorityGesture(
                 TapGesture().modifiers(.command).onEnded {
@@ -47,29 +55,39 @@ struct FolderRow: View {
                 Button("Copy Path") { copyToPasteboard(node.url.path) }
                 Button("Copy Relative Path") { copyToPasteboard(relativePath(node.url)) }
                 Divider()
+                Button("Add to Projects") { controller.addProject(node.url) }
+                Button("New File Here") { onNew?(node.url, false) }
+                Button("New Folder Here") { onNew?(node.url, true) }
+                Divider()
                 Button("Delete", role: .destructive) {
-                    confirmDelete(node.url) {
-                        if $0 {
-                            try? FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
-                            NotificationCenter.default.post(name: .reloadFileTree, object: nil)
-                        }
-                    }
+                    confirmDelete(node.url) { if $0 { onDelete?(node.url) } }
                 }
             }
-        .onAppear {
-            // Persisted expansions restore the chevron before `loadChildren`
-            // is ever called. Without this, the row draws as "open" while
-            // children stay nil — the phantom-expanded bug — and the next
-            // click merely collapses instead of expanding.
-            if expanded, node.children == nil { node.loadChildren() }
-        }
-            .onHover { hover = $0 }
+            .onAppear {
+                // Persisted expansions restore the chevron before `loadChildren`
+                // is ever called. Without this, the row draws as "open" while
+                // children stay nil — the phantom-expanded bug — and the next
+                // click merely collapses instead of expanding.
+                if expanded, node.children == nil { node.loadChildren() }
+            }
+            .onHover {
+                hover = $0
+                if $0 { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
             if expanded, let kids = node.children {
                 ForEach(kids) { child in
                     if child.isDirectory {
-                        FolderRow(node: child).padding(.leading, 14)
+                        FolderRow(node: child,
+                                  onSelect: onSelect,
+                                  onNew: onNew,
+                                  onDelete: onDelete)
+                            .padding(.leading, 14)
                     } else {
-                        FileRow(node: child).padding(.leading, 14)
+                        FileRow(node: child,
+                                onSelect: onSelect,
+                                onNew: onNew,
+                                onDelete: onDelete)
+                            .padding(.leading, 14)
                     }
                 }
             }
@@ -89,6 +107,9 @@ private struct FileRow: View {
     let node: FileNode
     @State private var hover = false
     @EnvironmentObject private var controller: TerminalController
+    var onSelect: ((URL) -> Void)? = nil
+    var onNew: ((URL, Bool) -> Void)? = nil
+    var onDelete: ((URL) -> Void)? = nil
 
     private var iconColor: Color {
         guard let slot = fileSlot(for: node.url) else { return Color.secondary }
@@ -108,19 +129,24 @@ private struct FileRow: View {
         .padding(.horizontal, 8)
         .background(hover ? Color.primary.opacity(0.06) : Color.clear)
         .contentShape(Rectangle())
-        .onHover { hover = $0 }
-        .onTapGesture { controller.openFile(node.url) }
+        .onHover {
+            hover = $0
+            if $0 { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .onTapGesture {
+            onSelect?(node.url)
+            controller.openFile(node.url)
+        }
         .contextMenu {
             Button("Copy Path") { copyToPasteboard(node.url.path) }
             Button("Copy Relative Path") { copyToPasteboard(relativePath(node.url)) }
             Divider()
+            Button("Add to Projects") { controller.addProject(node.url) }
+            Button("New File Here") { onNew?(node.url.deletingLastPathComponent(), false) }
+            Button("New Folder Here") { onNew?(node.url.deletingLastPathComponent(), true) }
+            Divider()
             Button("Delete", role: .destructive) {
-                confirmDelete(node.url) {
-                    if $0 {
-                        try? FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
-                        NotificationCenter.default.post(name: .reloadFileTree, object: nil)
-                    }
-                }
+                confirmDelete(node.url) { if $0 { onDelete?(node.url) } }
             }
         }
     }

@@ -59,6 +59,9 @@ class AgenticSystem: ObservableObject {
     // MARK: - Public API
     func processUserInput(_ input: String, context: AgentContext) async {
         workflowState = .analyzing
+        if conversationHistory.count > 200 {
+            conversationHistory.removeFirst(conversationHistory.count - 200)
+        }
 
         let userMessage = AgentMessage(role: .user, content: input, timestamp: Date(), toolCalls: [])
         conversationHistory.append(userMessage)
@@ -91,6 +94,7 @@ class AgenticSystem: ObservableObject {
                 if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
                     let cur = conversationHistory[i]
                     conversationHistory[i] = AgentMessage(
+                        id: assistantId,
                         role: .assistant, content: cur.content + piece,
                         timestamp: cur.timestamp, toolCalls: cur.toolCalls
                     )
@@ -101,6 +105,7 @@ class AgenticSystem: ObservableObject {
                 let cur = conversationHistory[i]
                 let note = "⚠️ \(error.localizedDescription)"
                 conversationHistory[i] = AgentMessage(
+                    id: assistantId,
                     role: .assistant,
                     content: cur.content.isEmpty ? note : cur.content + "\n\n" + note,
                     timestamp: cur.timestamp, toolCalls: cur.toolCalls
@@ -109,7 +114,6 @@ class AgenticSystem: ObservableObject {
         }
 
         workflowState = .completing
-        try? await Task.sleep(nanoseconds: 500_000_000)
         workflowState = .idle
     }
 
@@ -205,20 +209,21 @@ class AgenticSystem: ObservableObject {
         
         return parameters
     }
-    
-    
 }
+    
+    
 
 // MARK: - Supporting Types
 
 struct AgentMessage: Identifiable {
-    let id = UUID()
+    let id: UUID
     let role: MessageRole
     let content: String
     let toolCalls: [ToolCall]
     let timestamp: Date
     
-    init(role: MessageRole, content: String, timestamp: Date, toolCalls: [ToolCall] = []) {
+    init(id: UUID = UUID(), role: MessageRole, content: String, timestamp: Date, toolCalls: [ToolCall] = []) {
+        self.id = id
         self.role = role
         self.content = content
         self.toolCalls = toolCalls
@@ -348,6 +353,7 @@ enum AgentProviderError: LocalizedError {
 
 enum ProviderType: String, Codable, CaseIterable, Identifiable {
     case mock, openrouter, openAICompatible, foundation, huggingface, omp
+    case deepseek, nvidia, opencodeZen, opencodeGo, localLLM, custom
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -357,12 +363,18 @@ enum ProviderType: String, Codable, CaseIterable, Identifiable {
         case .foundation: return "Apple on-device (FoundationModels)"
         case .huggingface: return "HuggingFace"
         case .omp: return "OMP Agent"
+        case .deepseek: return "Deepseek"
+        case .nvidia: return "Nvidia (NIM)"
+        case .opencodeZen: return "Opencode Zen"
+        case .opencodeGo: return "Opencode Go"
+        case .localLLM: return "Local LLM (LM Studio / Ollama)"
+        case .custom: return "Custom (OpenAI-compatible)"
         }
     }
-    var needsBaseURL: Bool { self == .openAICompatible || self == .huggingface }
-    var needsKey: Bool { self == .openrouter || self == .huggingface }
-    var canListModels: Bool { self == .openrouter || self == .openAICompatible }
-    var supportsStreaming: Bool { self == .openrouter || self == .openAICompatible || self == .foundation }
+    var needsBaseURL: Bool { self == .openAICompatible || self == .huggingface || self == .localLLM || self == .custom }
+    var needsKey: Bool { self == .openrouter || self == .huggingface || self == .deepseek || self == .nvidia || self == .opencodeZen || self == .opencodeGo || self == .custom }
+    var canListModels: Bool { self == .openrouter || self == .openAICompatible || self == .deepseek || self == .nvidia || self == .opencodeZen || self == .opencodeGo || self == .localLLM || self == .custom }
+    var supportsStreaming: Bool { self == .openrouter || self == .openAICompatible || self == .foundation || self == .deepseek || self == .nvidia || self == .opencodeZen || self == .opencodeGo || self == .localLLM || self == .custom }
     var requiresmacOS26: Bool { self == .foundation }
 }
 
@@ -376,17 +388,16 @@ struct ProviderConfig: Identifiable, Codable, Hashable {
     var staticModels: [String]
     var selectedModel: String
     var temperature: Double
-    var maxTokens: Int
     var supportsStreaming: Bool
 
     init(id: String = UUID().uuidString, name: String, type: ProviderType,
          baseURL: String = "", keychainKey: String = "", isBuiltIn: Bool = false,
          staticModels: [String] = [], selectedModel: String = "",
-         temperature: Double = 0.3, maxTokens: Int = 1024, supportsStreaming: Bool? = nil) {
+        temperature: Double = 0.3, supportsStreaming: Bool? = nil) {
         self.id = id; self.name = name; self.type = type; self.baseURL = baseURL
         self.keychainKey = keychainKey; self.isBuiltIn = isBuiltIn
         self.staticModels = staticModels; self.selectedModel = selectedModel
-        self.temperature = temperature; self.maxTokens = maxTokens
+        self.temperature = temperature
         self.supportsStreaming = supportsStreaming ?? type.supportsStreaming
     }
 
@@ -398,10 +409,63 @@ struct ProviderConfig: Identifiable, Codable, Hashable {
         if !selectedModel.isEmpty { return selectedModel }
         switch type {
         case .openrouter: return "openai/gpt-4o-mini"
-        case .openAICompatible: return staticModels.first ?? "local-model"
+        case .openAICompatible, .deepseek, .nvidia, .opencodeZen, .opencodeGo, .localLLM, .custom:
+            return staticModels.first ?? "local-model"
         case .huggingface: return staticModels.first ?? ""
         case .foundation: return "system"
         default: return ""
+        }
+    }
+}
+
+// MARK: - Async model catalog (used by the Settings model picker)
+
+/// A single model offered by a provider. `isFree` lets the UI filter to
+/// free-tier models (e.g. OpenRouter `:free` ids).
+struct AIModel: Identifiable {
+    let id: String
+    let name: String
+    let isFree: Bool
+}
+
+extension ProviderConfig {
+    /// Async model list for this provider.
+    /// - For providers exposing OpenAI-compatible `/models`, fetch + map them,
+    ///   marking known-free ids (`isFree == true`).
+    /// - Otherwise mirror `staticModels`.
+    /// Never throws to the caller: on any failure it falls back to `staticModels`
+    /// so the UI always has something to render.
+    func fetchModels() async -> [AIModel] {
+        guard type.canListModels, type != .foundation else {
+            return staticModels.map { AIModel(id: $0, name: $0, isFree: false) }
+        }
+        let base = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/models") else {
+            return staticModels.map { AIModel(id: $0, name: $0, isFree: false) }
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("macterm", forHTTPHeaderField: "HTTP-Referer")
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        req.timeoutInterval = 30
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                return staticModels.map { AIModel(id: $0, name: $0, isFree: false) }
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let list = json["data"] as? [[String: Any]] else {
+                return staticModels.map { AIModel(id: $0, name: $0, isFree: false) }
+            }
+            let models = list.compactMap { $0["id"] as? String }
+                .map { AIModel(id: $0, name: $0, isFree: $0.lowercased().contains("free")) }
+            return models.isEmpty
+                ? staticModels.map { AIModel(id: $0, name: $0, isFree: false) }
+                : models
+        } catch {
+            return staticModels.map { AIModel(id: $0, name: $0, isFree: false) }
         }
     }
 }
@@ -485,7 +549,7 @@ final class ProviderRegistry: ObservableObject {
             providers = ProviderConfig.builtIns
         }
         selectedId = UserDefaults.standard.string(forKey: "macterm.selectedProvider")
-            ?? providers.first(where: { $0.type != .mock })?.id
+            ?? providers.first(where: { $0.type != .mock && $0.type != .foundation })?.id
             ?? providers.first!.id
     }
 
@@ -502,25 +566,40 @@ final class ProviderRegistry: ObservableObject {
 
 extension ProviderConfig {
     static let builtIns: [ProviderConfig] = [
-        ProviderConfig(name: "Mock (offline)", type: .mock, isBuiltIn: true),
         ProviderConfig(name: "OpenRouter", type: .openrouter,
                        baseURL: "https://openrouter.ai/api/v1", keychainKey: "openrouter",
                        isBuiltIn: true,
                        selectedModel: UserDefaults.standard.string(forKey: "aiModel") ?? "openai/gpt-4o-mini"),
-        ProviderConfig(name: "Apple on-device", type: .foundation, isBuiltIn: true, selectedModel: "system"),
+        ProviderConfig(name: "Deepseek", type: .deepseek,
+                       baseURL: "https://api.deepseek.com", keychainKey: "deepseek",
+                       isBuiltIn: true,
+                       staticModels: ["deepseek-chat"], selectedModel: "deepseek-chat"),
+        ProviderConfig(name: "Nvidia (NIM)", type: .nvidia,
+                       baseURL: "https://integrate.api.nvidia.com/v1", keychainKey: "nvidia",
+                       isBuiltIn: true,
+                       staticModels: ["meta/llama-3.1-8b-instruct"],
+                       selectedModel: "meta/llama-3.1-8b-instruct"),
+        ProviderConfig(name: "Opencode Zen", type: .opencodeZen,
+                       baseURL: "https://zen.opencode.ai/api/v1", keychainKey: "opencodeZen",
+                       isBuiltIn: true,
+                       staticModels: ["gpt-4o-mini"], selectedModel: "gpt-4o-mini"),
+        ProviderConfig(name: "Opencode Go", type: .opencodeGo,
+                       baseURL: "https://go.opencode.ai/api/v1", keychainKey: "opencodeGo",
+                       isBuiltIn: true,
+                       staticModels: ["gpt-4o-mini"], selectedModel: "gpt-4o-mini"),
+        ProviderConfig(name: "Local LLM (LM Studio / Ollama)", type: .localLLM,
+                       baseURL: "http://localhost:1234/v1", isBuiltIn: true,
+                       staticModels: ["local-model"], selectedModel: "local-model"),
         ProviderConfig(name: "HuggingFace", type: .huggingface,
                        baseURL: "https://api-inference.huggingface.co", keychainKey: "huggingface",
                        isBuiltIn: true,
                        staticModels: ["meta-llama/Llama-3.1-8B-Instruct"],
-                       selectedModel: "meta-llama/Llama-3.1-8B-Instruct"),
-        ProviderConfig(name: "Local (Ollama / LM Studio)", type: .openAICompatible,
-                       baseURL: "http://localhost:11434/v1", isBuiltIn: true)
+                       selectedModel: "meta-llama/Llama-3.1-8B-Instruct")
     ]
 }
 
 // MARK: - Provider protocol (streaming by default)
 
-@MainActor
 protocol AgentProvider {
     var config: ProviderConfig { get }
     func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse
@@ -662,7 +741,7 @@ struct OpenAICompatibleProvider: AgentProvider {
         }
         req.timeoutInterval = 60
         var body: [String: Any] = ["model": config.effectiveModel, "messages": messages,
-                                   "temperature": config.temperature, "max_tokens": config.maxTokens]
+                                   "temperature": config.temperature]
         if stream { body["stream"] = true }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return req
@@ -720,7 +799,6 @@ struct HuggingFaceProvider: AgentProvider {
         let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
         let body: [String: Any] = ["inputs": prompt,
                                    "parameters": ["return_full_text": false,
-                                                  "max_new_tokens": config.maxTokens,
                                                   "temperature": config.temperature]]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
@@ -756,12 +834,12 @@ struct FoundationProvider: AgentProvider {
     }
 
     func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
-            Task {
+        let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
+        return AsyncThrowingStream { continuation in
+            Task { @MainActor in
                 do {
                     guard SystemLanguageModel.default.isAvailable else { throw AgentProviderError.unavailable }
                     let session = LanguageModelSession()
-                    let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
                     var full = ""
                     for try await partial in session.streamResponse(to: prompt) {
                         let delta = String(partial.content.dropFirst(full.count))
@@ -830,7 +908,8 @@ enum AgentProviderFactory {
     static func make(_ config: ProviderConfig) -> AgentProvider {
         switch config.type {
         case .mock:           return MockProvider(config)
-        case .openrouter, .openAICompatible: return OpenAICompatibleProvider(config)
+        case .openrouter, .openAICompatible, .deepseek, .nvidia, .opencodeZen, .opencodeGo, .localLLM, .custom:
+            return OpenAICompatibleProvider(config)
         case .huggingface:    return HuggingFaceProvider(config)
         case .omp:            return OMPAgentProvider(config)
         case .foundation:
@@ -1253,7 +1332,7 @@ final class ModelCatalog: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         switch config.type {
-        case .openrouter, .openAICompatible:
+        case .openrouter, .openAICompatible, .deepseek, .nvidia, .opencodeZen, .opencodeGo, .localLLM, .custom:
             await fetchOpenAICompatible(config)
         case .foundation:
             let list = [CatalogModel(id: "system", name: "Apple on-device Foundation Model",
@@ -1313,7 +1392,7 @@ final class ModelCatalog: ObservableObject {
             let prompt = (m.pricing?.prompt).flatMap(Double.init) ?? 0
             let completion = (m.pricing?.completion).flatMap(Double.init) ?? 0
             return CatalogModel(
-                id: m.id, name: m.name, provider: provider, description: m.description ?? "",
+                id: m.id, name: m.name ?? m.id, provider: provider, description: m.description ?? "",
                 contextLength: m.context_length ?? 0,
                 promptPricePer1M: prompt * 1_000_000, completionPricePer1M: completion * 1_000_000,
                 modalities: modalities
@@ -1324,7 +1403,7 @@ final class ModelCatalog: ObservableObject {
     private struct ORResponse: Decodable { let data: [ORModel] }
     private struct ORModel: Decodable {
         let id: String
-        let name: String
+        let name: String?
         let description: String?
         let context_length: Int?
         let pricing: ORPricing?

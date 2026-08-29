@@ -20,8 +20,6 @@ struct AgentPanelMain: View {
                 .padding(12)
             }
             
-            ToolSelectionStrip(agenticSystem: agenticSystem)
-
             AgentInputArea(
                 userInput: $userInput,
                 isProcessing: agenticSystem.workflowState == .analyzing || agenticSystem.workflowState == .planning || agenticSystem.workflowState == .executing
@@ -195,7 +193,7 @@ struct MessageContentView: View {
                     Color.blue.opacity(0.2) : 
                     Color(NSColor.controlBackgroundColor)
                 )
-                .cornerRadius(12)
+                .modifier(BubbleCornerRadiusModifier(lineCount: message.content.displayLineCount, style: AppBubbleStyle()))
                 
             if !message.toolCalls.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -238,78 +236,93 @@ struct AgentInputArea: View {
     let isProcessing: Bool
     let action: () -> Void
     @EnvironmentObject private var controller: TerminalController
-    
+    @Environment(\.horizontalSizeClass) private var hSize
+
+    /// Send is enabled only with a non-empty message and when idle.
+    private var canSend: Bool {
+        !isProcessing && !userInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
-        VStack(spacing: 10) {
-            if $userInput.wrappedValue.hasPrefix("/") {
+        VStack(spacing: 6) {
+            if userInput.hasPrefix("/") {
                 Text("Commands: /clear  /theme <name>  /newtab  /help")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
             }
             Divider()
-            
-            HStack(spacing: 10) {
-                TextEditor(text: $userInput)
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Ask Macterm AI…", text: $userInput, axis: .vertical)
                     .font(.system(size: controller.fontSize))
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 38, maxHeight: 140)
-                    .padding(6)
-                    .background(Color.primary.opacity(0.06))
-                    .cornerRadius(6)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...4)
                     .disabled(isProcessing)
-                
+                    .onSubmit { if canSend { action() } }
                 Button(action: action) {
-                    Image(systemName: isProcessing ? "hourglass" : "arrow.up.circle.fill")
-                        .font(.title3)
-                        .frame(width: 36, height: 36)
-                        .background(isProcessing ? Color.gray.opacity(0.2) : Color.accentColor)
-                        .foregroundColor(isProcessing ? .secondary : .white)
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(isProcessing ? Color.gray.opacity(0.3) : Color.accentColor)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .disabled(isProcessing || userInput.isEmpty)
+                .disabled(!canSend)
+                .help("Send message")
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+            .padding(.vertical, hSize == .compact ? 4 : 7)
         }
         .background(Color.clear)
     }
 }
-struct ToolSelectionStrip: View {
-    @ObservedObject var agenticSystem: AgenticSystem
 
-    var body: some View {
-        Group {
-            if agenticSystem.availableTools.isEmpty {
-                EmptyView()
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(agenticSystem.availableTools, id: \.name) { tool in
-                            Button(action: { Task { await agenticSystem.runTool(named: tool.name) } }) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(tool.name)
-                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                        .lineLimit(1)
-                                    Text(tool.description)
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                }
-                                .frame(width: 132, alignment: .leading)
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .background(Color.primary.opacity(0.08))
-                                .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-                            .help(tool.description)
-                        }
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                }
-                .frame(height: 58)
-            }
-        }
+// MARK: - Chat bubble shape
+
+/// Injectable styling contract for chat bubbles — swap for theming or unit tests.
+protocol BubbleStyleProviding {
+    /// Large value → SwiftUI clamps it to half the bubble height, yielding an oval/capsule for one line.
+    var singleLineRadius: CGFloat { get }
+    /// Balanced rounded-rectangle radius for wrapped (multi-line) content.
+    var multiLineRadius: CGFloat { get }
+}
+
+/// Default bubble styling. `singleLineRadius` is intentionally huge so a single
+/// line renders as a true oval (capsule); multi-line uses a balanced 14pt radius.
+struct AppBubbleStyle: BubbleStyleProviding {
+    let singleLineRadius: CGFloat = 1000
+    let multiLineRadius: CGFloat = 14
+}
+
+/// Pure, value-typed radius resolver — trivially unit-testable, no side effects.
+enum BubbleRadius {
+    static func radius(lineCount: Int, style: BubbleStyleProviding) -> CGFloat {
+        lineCount <= 1 ? style.singleLineRadius : style.multiLineRadius
+    }
+}
+
+/// Reusable modifier: single-line content → oval (capsule); multi-line → rounded
+/// rectangle with balanced curvature. Value-typed, no retained closures, safe to
+/// apply on the main thread inside `body` (SwiftUI evaluates `body` on main).
+struct BubbleCornerRadiusModifier: ViewModifier {
+    let lineCount: Int
+    let style: BubbleStyleProviding
+
+    func body(content: Content) -> some View {
+        content.cornerRadius(BubbleRadius.radius(lineCount: lineCount, style: style))
+    }
+}
+
+extension String {
+    /// Number of lines in a message (explicit newlines). Pure + value-semantic so
+    /// it is computed synchronously from the model on the main thread — no layout
+    /// pass or retained closure required. A true wrapped-line count would need the
+    /// rendered width (GeometryReader/NSLayoutManager); the newline heuristic is the
+    /// standard chat-bubble rule and keeps this cheap and testable.
+    var displayLineCount: Int {
+        max(1, components(separatedBy: "\n").count)
     }
 }

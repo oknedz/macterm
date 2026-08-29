@@ -50,6 +50,8 @@ struct TerminalViewRepresentable: NSViewRepresentable {
             let cwd = session?.cwd
             tv.startProcess(executable: shell, args: ["-l"], environment: nil, execName: nil, currentDirectory: cwd)
         }
+        // TR2/TR3: begin best-effort Neovim-background monitoring for this pty.
+        tv.startNvimMonitor()
         context.coordinator.applied = controller.appearanceSignature
         return tv
     }
@@ -155,6 +157,16 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     /// during the drag freezes the on-screen content; the debounced
     /// `applyPendingSize` then re-flows the (single) prompt on release.
     private var inLiveDrag = false
+    // TR2/TR3: best-effort Neovim detection. `nvimShellPid` is captured once on
+    // the main thread at monitor start; the polling itself runs on `nvimQueue`
+    // so the `ps` spawn + tree walk never blocks terminal I/O on the main
+    // thread (TR3). When nvim is detected we pin the layer background to the
+    // team-wide color (see pollNvim); otherwise applyAppearance's value stands.
+    private var nvimShellPid: pid_t = 0
+    private var nvimMonitorTimer: DispatchSourceTimer?
+    private let nvimPollInterval: TimeInterval = 1.5
+    private var nvimActive = false
+    private let nvimQueue = DispatchQueue(label: "com.macterm.nvimdetect", qos: .utility)
 
     override func viewWillStartLiveResize() {
         super.viewWillStartLiveResize()
@@ -284,5 +296,85 @@ final class ResizableTerminalView: LocalProcessTerminalView {
         clearScrollback()
     }
 
-    deinit { timer?.invalidate() }
+    // MARK: - TR2/TR3: Neovim background sync + off-main detection
+
+    /// Begin polling for an nvim/vim child of this pty's shell. Called once per
+    /// view (from makeNSView for newly created views); guarded so a recycled,
+    /// still-monitored view never double-starts. Runs on the main thread.
+    func startNvimMonitor() {
+        guard nvimMonitorTimer == nil else { return }
+        // Capture the shell PID once on the main thread; the background poll
+        // reads only this stable value (never touches `process` off-main).
+        nvimShellPid = process?.shellPid ?? 0
+        let timer = DispatchSource.makeTimerSource(queue: nvimQueue)
+        timer.schedule(deadline: .now() + nvimPollInterval, repeating: nvimPollInterval)
+        timer.setEventHandler { [weak self] in
+            self?.pollNvim()
+        }
+        timer.resume()
+        nvimMonitorTimer = timer
+    }
+
+    /// Off-main: detect an nvim/vim descendant of the shell and, on a state
+    /// change, hop to the main thread to pin/restore the layer background.
+    /// The entire `ps` spawn + parse stays on `nvimQueue` (TR3 latency).
+    private func pollNvim() {
+        guard nvimShellPid != 0 else { return }
+        let detected = Self.descendantCommContains(nvimShellPid, needles: ["nvim", "vim"])
+        guard detected != nvimActive else { return }
+        nvimActive = detected
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // controller.backgroundColor is the single source of truth. While
+            // nvim is active we force the layer to it so the editor does not
+            // default to black; otherwise we restore the normal (same) value.
+            self.layer?.backgroundColor = self.controller?.backgroundColor.cgColor
+        }
+    }
+
+    /// True if any process in the descendant tree of `rootPid` has a `comm`
+    /// containing one of `needles` (case-insensitive). Spawns `ps` once and
+    /// walks the parent→child map on the calling (background) queue.
+    private static func descendantCommContains(_ rootPid: pid_t, needles: [String]) -> Bool {
+        let pipe = Pipe()
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-eo", "pid=,ppid=,comm="]
+        ps.standardOutput = pipe
+        try? ps.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+        guard let text = String(data: data, encoding: .utf8) else { return false }
+
+        var parentOf: [pid_t: pid_t] = [:]
+        var commOf: [pid_t: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let f = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard f.count == 3, let pid = pid_t(f[0]), let ppid = pid_t(f[1]) else { continue }
+            parentOf[pid] = ppid
+            commOf[pid] = f[2]
+        }
+
+        var childrenOf: [pid_t: [pid_t]] = [:]
+        for (pid, ppid) in parentOf {
+            if childrenOf[ppid] == nil { childrenOf[ppid] = [] }
+            childrenOf[ppid]!.append(pid)
+        }
+
+        var stack: [pid_t] = [rootPid]
+        var seen = Set<pid_t>()
+        while let pid = stack.popLast() {
+            guard seen.insert(pid).inserted else { continue }
+            if let comm = commOf[pid]?.lowercased(),
+               needles.contains(where: { comm.contains($0) }) { return true }
+            if let kids = childrenOf[pid] { stack.append(contentsOf: kids) }
+        }
+        return false
+    }
+
+    deinit {
+        timer?.invalidate()
+        nvimMonitorTimer?.cancel()
+        nvimMonitorTimer = nil
+    }
 }

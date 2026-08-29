@@ -11,55 +11,58 @@ struct TitleBar: View {
     @EnvironmentObject private var controller: TerminalController
 
     var body: some View {
-        HStack(spacing: 6) {
-            // Clears the macOS traffic lights (red/yellow/green) at the top-left.
-            Spacer().frame(width: 78)
+        GeometryReader { geo in
+            let maxTabs = geo.size.width * 0.8
+            HStack(spacing: 6) {
+                // Clears the macOS traffic lights (red/yellow/green) at the top-left.
+                Spacer().frame(width: 78)
 
-            // Sidebar toggle — always here (top bar only).
-            IconButton(systemName: "sidebar.left") { controller.toggleSidebar() }
-                .frame(width: 28, height: 28)
+                // Sidebar toggle — always here (top bar only).
+                IconButton(systemName: "sidebar.left") { controller.toggleSidebar() }
+                    .frame(width: 28, height: 28)
 
-            // Tabs inline with the traffic lights.
-            ForEach(controller.tabs) { tab in
-                TabPill(tab: tab)
+                // Tabs inline with the traffic lights. Capped at 80% of the
+                // title-bar width so the trailing widgets stay fully visible.
+                HStack(spacing: 5) {
+                    ForEach(controller.tabs) { tab in
+                        TabPill(tab: tab)
+                    }
+                }
+                .frame(maxWidth: maxTabs, alignment: .leading)
+
+                IconButton(systemName: "plus") { controller.newTab() }
+                    .frame(width: 26, height: 26)
+
+                Spacer(minLength: 0)
+
+                // Agent panel toggle - right side next to settings
+                IconButton(systemName: controller.showAgentPanel ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack", action: { controller.perform("toggleAgentPanel") }, foregroundColor: controller.showAgentPanel ? Color(nsColor: controller.accentColor) : Color(nsColor: controller.foregroundColor))
+                    .frame(width: 28, height: 28)
+
+                // Settings gear, top-right, inline with the tabs.
+                SettingsLink {
+                    SettingsGear()
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 14)
             }
-            IconButton(systemName: "plus") { controller.newTab() }
-                .frame(width: 26, height: 26)
-
-            Spacer(minLength: 0)
-
-            // Agent panel toggle - right side next to settings
-            IconButton(systemName: controller.showAgentPanel ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack", action: { controller.perform("toggleAgentPanel") }, foregroundColor: controller.showAgentPanel ? .blue : .secondary)
-                .frame(width: 28, height: 28)
-
-            // Settings gear, top-right, inline with the tabs.
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30)
-                    .background(Color.clear)
-                    .contentShape(Rectangle())
+            .frame(height: 36)
+            .padding(.vertical, 2)
+            .background {
+                // Theme background bleeds through the titlebar vibrancy so the
+                // top bar unifies with the rest of the app on every theme.
+                ZStack {
+                    Color(nsColor: controller.theme.background).opacity(0.55)
+                    VisualEffectView(material: .titlebar, blendingMode: .withinWindow)
+                }
             }
-            .buttonStyle(.plain)
-            .padding(.trailing, 14)
-        }
-        .frame(height: 36)
-        .padding(.vertical, 2)
-        .background {
-            // Theme background bleeds through the titlebar vibrancy so the
-            // top bar unifies with the rest of the app on every theme.
-            ZStack {
-                Color(nsColor: controller.theme.background).opacity(0.55)
-                VisualEffectView(material: .titlebar, blendingMode: .withinWindow)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .frame(height: 0.5)
+                    .foregroundStyle(Color(nsColor: controller.foregroundColor).opacity(0.4))
             }
         }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .frame(height: 0.5)
-                .foregroundStyle(.separator)
-                .opacity(0.5)
-        }
+        .frame(height: 40)
     }
 }
 
@@ -68,13 +71,14 @@ struct IconButton: View {
     let systemName: String
     let action: () -> Void
     var foregroundColor: Color? = nil
+    @EnvironmentObject private var controller: TerminalController
     @State private var hover = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(foregroundColor ?? .secondary)
+                .foregroundStyle(foregroundColor ?? Color(nsColor: controller.foregroundColor))
         }
         .buttonStyle(.plain)
         .frame(width: 30, height: 30)
@@ -97,24 +101,21 @@ private struct TabPill: View {
     let tab: WorkspaceTab
     @EnvironmentObject private var controller: TerminalController
     @State private var hover = false
+    @State private var closeHover = false
     @State private var renaming = false
     @State private var draft = ""
 
     private var active: Bool { tab.id == controller.activeTabId }
 
     var body: some View {
-        let idx = controller.tabs.firstIndex(where: { $0.id == tab.id }).map { $0 + 1 }
+        let hotkey = controller.tabHotkeys[tab.id]
+            ?? (controller.tabs.firstIndex(where: { $0.id == tab.id }).map { $0 + 1 } ?? 0)
         HStack(spacing: 5) {
-            // Static terminal glyph so each tab reads as a terminal, plus its
-            // 1-based index (⌘1–⌘9 target it) when there are ≤ 9 tabs.
-            Image(systemName: "terminal")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-            if let idx, idx <= 9 {
-                Text("\(idx)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
+            // ⌘ + number tab hotkey glyph (user-selectable 1–5; falls back to the
+            // tab's 1-based position). Replaces the old static terminal SF Symbol.
+            Text("⌘\(hotkey)")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color(nsColor: controller.foregroundColor))
             if let color = tab.color {
                 Circle()
                     .fill(Color(nsColor: color))
@@ -134,10 +135,14 @@ private struct TabPill: View {
             Button { controller.closeTab(tab.id) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(nsColor: controller.foregroundColor))
             }
             .buttonStyle(.plain)
             .opacity(hover || active ? 1 : 0)
+            .background(closeHover ? Color.white.opacity(0.16) : Color.clear)
+            .cornerRadius(6)
+            .contentShape(Rectangle())
+            .onHover { closeHover = $0 }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 3)
@@ -160,6 +165,13 @@ private struct TabPill: View {
             controller.focusedSessionId = tab.layout.firstLeaf ?? controller.focusedSessionId
         }
         .contextMenu {
+            Menu("Shortcut") {
+                ForEach(1...5, id: \.self) { n in
+                    Button("⌘\(n)") { controller.setTabHotkey(tab.id, n) }
+                }
+                Divider()
+                Button("Clear") { controller.setTabHotkey(tab.id, nil) }
+            }
             Button("Rename") {
                 draft = tab.title
                 renaming = true
@@ -279,12 +291,13 @@ private struct RenamingTextField: NSViewRepresentable {
 
 /// Small gear glyph used inside SettingsLink in the title bar.
 private struct SettingsGear: View {
+    @EnvironmentObject private var controller: TerminalController
     @State private var hover = false
 
     var body: some View {
         Image(systemName: "gearshape")
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color(nsColor: controller.foregroundColor))
             .frame(width: 30, height: 30)
             .background(hover ? Color.white.opacity(0.16) : Color.clear)
             .cornerRadius(7)
