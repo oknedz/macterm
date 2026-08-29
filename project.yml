@@ -22,8 +22,8 @@ targets:
           - project-brain
           - task
           - scripts
-          - SwiftTermVendor
           - macterm
+          - Tests
     info:
       path: Info.plist
     dependencies:
@@ -32,8 +32,31 @@ targets:
       - package: Highlightr
         product: Highlightr
     settings:
-        PRODUCT_BUNDLE_IDENTIFIER: com.zdenko.macterm
-        ENABLE_HARDENED_RUNTIME: false
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        DEVELOPMENT_TEAM: ""
+      PRODUCT_BUNDLE_IDENTIFIER: com.zdenko.macterm
+      ENABLE_HARDENED_RUNTIME: false
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "-"
+      DEVELOPMENT_TEAM: ""
+  # ---------------------------------------------------------------
+  # Unit tests — additive target. Exercises the Liquid Glass
+  # algorithm + renderer without depending on the rest of the app.
+  # The macterm application target above is NOT modified.
+  # ---------------------------------------------------------------
+  mactermTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      - path: Tests/LiquidGlassRasterizerTests.swift
+      - path: Glass/LiquidGlassAlgorithm.swift
+      - path: Glass/LiquidGlassRenderer.swift
+      - path: Glass/LiquidGlassGlassView.swift
+      - path: Views/LiquidGlassAlgorithmSettingsView.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.zdenko.macterm.tests
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "-"
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_FILE: Tests/Info.plist
+    dependencies:
+      - sdk: XCTest.framework
