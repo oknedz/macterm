@@ -2,6 +2,7 @@ import Foundation
 import SwiftTerm
 import SwiftUI
 import AppKit
+import Darwin
 
 /// App-wide state: the tab set, the active tab, sidebar visibility, the
 /// favorite roots, the full terminal appearance/behavior settings (persisted to
@@ -10,7 +11,7 @@ import AppKit
 /// A user-rebindable keyboard shortcut for an app command.
 struct KeyBinding: Codable, Equatable, Identifiable {
     let id: String
-    /// Single character, symbol, digit or " " (space / nvim leader).
+    /// Single character, symbol, digit or " " (space / leader key).
     var key: String
     /// SwiftUI `EventModifiers` raw value.
     var modifiers: Int
@@ -63,8 +64,6 @@ struct CommandSpec: Identifiable {
     let id: String
     let group: String
     let title: String
-    /// The NvChad/neovim mapping this command mirrors (shown as a caption).
-    let nvim: String
     let key: String
     let mods: EventModifiers
 }
@@ -182,6 +181,9 @@ final class TerminalController: ObservableObject {
     /// Active NvChad/base46 theme slug ("onedark"). All terminal colors, the
     /// editor palette and the app's dark/light appearance derive from it.
     @Published var themeName: String = AppTheme.defaultSlug { didSet { persist() } }
+    /// Per-slot base16 hex overrides keyed by theme slug, so users can fine-tune
+    /// any ANSI color. Empty for a theme = use the catalog colors.
+    @Published var themeColorOverrides: [String: [String: String]] = [:] { didSet { persist() } }
     /// Terminal background opacity (1 = opaque, <1 = frosted glass over the vibrancy).
     @Published var backgroundAlpha: Double = 0.7 { didSet { persist() } }
 
@@ -204,9 +206,48 @@ final class TerminalController: ObservableObject {
     /// Expanded folder paths for the file tree. Persisted, so the tree looks
     /// identical after relaunches, tab switches and sidebar toggles.
     @Published var expandedPaths: Set<String> = [] { didSet { persistExpandedPaths() } }
+    /// Directories pinned as projects from the sidebar tree (persisted).
+    @Published var projects: [SidebarProject] = [] { didSet { persist() } }
+    /// Saved SSH connections (persisted).
+    @Published var sshConnections: [SSHConnection] = [] { didSet { persist() } }
 
     func setExpanded(_ path: String, _ expanded: Bool) {
         if expanded { expandedPaths.insert(path) } else { expandedPaths.remove(path) }
+    }
+    // MARK: - Projects
+
+    func addProject(_ url: URL) {
+        let path = url.path
+        guard !projects.contains(where: { $0.path == path }) else { return }
+        projects.append(SidebarProject(id: UUID(), path: path,
+                                        name: url.lastPathComponent, colorHex: "5AC2E7"))
+    }
+    func removeProject(_ id: UUID) { projects.removeAll { $0.id == id } }
+    func renameProject(_ id: UUID, _ name: String) {
+        if let i = projects.firstIndex(where: { $0.id == id }) { projects[i].name = name }
+    }
+    func setProjectColor(_ id: UUID, _ hex: String) {
+        if let i = projects.firstIndex(where: { $0.id == id }) { projects[i].colorHex = hex }
+    }
+    func isProject(_ url: URL) -> Bool { projects.contains { $0.path == url.path } }
+    // MARK: - SSH
+
+    func addSSHConnection(_ c: SSHConnection) { sshConnections.append(c) }
+    func removeSSHConnection(_ id: UUID) { sshConnections.removeAll { $0.id == id } }
+    func updateSSHConnection(_ c: SSHConnection) {
+        if let i = sshConnections.firstIndex(where: { $0.id == c.id }) { sshConnections[i] = c }
+    }
+    /// Open a new terminal tab that launches `ssh` for the given connection.
+    @discardableResult
+    func connectSSH(_ c: SSHConnection) -> UUID {
+        let s = Session(title: c.name.isEmpty ? c.host : c.name,
+                        cwd: nil, profile: "SSH",
+                        ssh: SSHLaunch(host: c.host, user: c.user, port: c.port, identityFile: c.identityFile))
+        sessions.append(s)
+        let tab = WorkspaceTab(title: s.title, layout: .terminal(s.id))
+        tabs.append(tab)
+        activeTabId = tab.id
+        return s.id
     }
 
     // MARK: - General
@@ -233,6 +274,13 @@ final class TerminalController: ObservableObject {
     
     /// Shared agentic system for AI workflows
     let agenticSystem = AgenticSystem()
+    /// Liquid Glass appearance toggle (Settings → Appearance). On = macOS 26
+    /// Liquid Glass (or NSVisualEffectView vibrancy on macOS 15); off = the
+    /// existing theme backgrounds. Persisted; defaults to on so the current
+    /// always-glass chrome is preserved until the user opts out.
+    @Published var liquidGlass: Bool = (UserDefaults.standard.object(forKey: "liquidGlass") as? Bool) ?? true {
+        didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") }
+    }
 
     var activeCwd: String? {
         sessions.first(where: { $0.id == focusedSessionId })?.cwd
@@ -271,10 +319,40 @@ final class TerminalController: ObservableObject {
     // MARK: - Resolved values consumed by the terminal view
     /// The active NvChad/base46 scheme; falls back to the default when the
     /// persisted slug no longer exists (e.g. after a catalog refresh).
-    var theme: AppTheme { AppTheme.bySlug(themeName) ?? AppTheme.bySlug(AppTheme.defaultSlug)! }
+    var theme: AppTheme {
+        let base = AppTheme.bySlug(themeName) ?? AppTheme.bySlug(AppTheme.defaultSlug)!
+        guard let o = themeColorOverrides[themeName], !o.isEmpty else { return base }
+        var map: [Int: String] = [:]
+        for (k, v) in o { if let i = Int(k) { map[i] = v } }
+        return base.applyingOverrides(map)
+    }
     var isDarkTheme: Bool { theme.isDark }
     var accentColor: NSColor { theme.accent }
 
+    /// Clear manual color overrides for the active theme.
+    func resetThemeColors() {
+        themeColorOverrides[themeName] = [:]
+    }
+
+    /// Two-way binding for editing one ANSI slot's color in Settings.
+    func themeColorBinding(_ slot: Int) -> Binding<SwiftUI.Color> {
+        Binding(
+            get: {
+                let hex = self.themeColorOverrides[self.themeName]?["\(slot)"] ?? self.theme.base16[slot]
+                return SwiftUI.Color(nsColor: NSColor(hex: hex) ?? .black)
+            },
+            set: { c in
+                let r = c.resolve(in: EnvironmentValues())
+                let hex = String(format: "%02X%02X%02X",
+                                 Int((r.red * 255).rounded()),
+                                 Int((r.green * 255).rounded()),
+                                 Int((r.blue * 255).rounded()))
+                var forTheme = self.themeColorOverrides[self.themeName] ?? [:]
+                forTheme["\(slot)"] = hex
+                self.themeColorOverrides[self.themeName] = forTheme
+            }
+        )
+    }
     var font: NSFont {
         NSFont(name: fontName, size: fontSize)
             ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -329,79 +407,79 @@ final class TerminalController: ObservableObject {
     /// Every app command, grouped NvChad-style. Defaults blend macOS idioms
     /// with the neovim mappings they mirror (`lua/nvchad/mappings.lua`).
     static let commandCatalog: [CommandSpec] = [
-        CommandSpec(id: "newTab",       group: "Tabs",   title: "New Tab",            nvim: "<leader>b   :enew", key: "t", mods: .command),
-        CommandSpec(id: "nextTab",      group: "Tabs",   title: "Next Tab",           nvim: "<leader>bn buf next", key: "]", mods: [.command, .shift]),
-        CommandSpec(id: "prevTab",      group: "Tabs",   title: "Previous Tab",       nvim: "<leader>bp buf prev", key: "[", mods: [.command, .shift]),
-        CommandSpec(id: "closePane",    group: "Tabs",   title: "Close Pane / Tab",   nvim: "<leader>tc / <C-w>c", key: "w", mods: .command),
+        CommandSpec(id: "newTab",       group: "Tabs",   title: "New Tab", key: "t", mods: .command),
+        CommandSpec(id: "nextTab",      group: "Tabs",   title: "Next Tab", key: "]", mods: [.command, .shift]),
+        CommandSpec(id: "prevTab",      group: "Tabs",   title: "Previous Tab", key: "[", mods: [.command, .shift]),
+        CommandSpec(id: "closePane",    group: "Tabs",   title: "Close Pane / Tab", key: "w", mods: .command),
 
         // Panes — <C-w> family; navigation mirrors <leader>sv/<leader>sh +
         // the <C-h/j/k/l> window-navigation group (⌥⌘ on macOS).
-        CommandSpec(id: "splitRight",   group: "Panes",  title: "Split Right",        nvim: "<leader>v vsplit", key: "d", mods: .command),
-        CommandSpec(id: "splitDown",    group: "Panes",  title: "Split Down",         nvim: "<leader>sh horizontal", key: "d", mods: [.command, .shift]),
-        CommandSpec(id: "focusLeft",    group: "Panes",  title: "Focus Pane Left",    nvim: "<leader>hh / <C-h>", key: "h", mods: [.command, .option]),
-        CommandSpec(id: "focusDown",    group: "Panes",  title: "Focus Pane Below",   nvim: "<C-j>", key: "j", mods: [.command, .option]),
-        CommandSpec(id: "focusUp",      group: "Panes",  title: "Focus Pane Above",   nvim: "<C-k>", key: "k", mods: [.command, .option]),
-        CommandSpec(id: "focusRight",   group: "Panes",  title: "Focus Pane Right",   nvim: "<leader>ll / <C-l>", key: "l", mods: [.command, .option]),
+        CommandSpec(id: "splitRight",   group: "Panes",  title: "Split Right", key: "d", mods: .command),
+        CommandSpec(id: "splitDown",    group: "Panes",  title: "Split Down", key: "d", mods: [.command, .shift]),
+        CommandSpec(id: "focusLeft",    group: "Panes",  title: "Focus Pane Left", key: "h", mods: [.command, .option]),
+        CommandSpec(id: "focusDown",    group: "Panes",  title: "Focus Pane Below", key: "j", mods: [.command, .option]),
+        CommandSpec(id: "focusUp",      group: "Panes",  title: "Focus Pane Above", key: "k", mods: [.command, .option]),
+        CommandSpec(id: "focusRight",   group: "Panes",  title: "Focus Pane Right", key: "l", mods: [.command, .option]),
 
         // View / UI
-        CommandSpec(id: "toggleSidebar",group: "View",   title: "Toggle Sidebar",     nvim: "<leader>e NvimTreeToggle", key: "s", mods: [.command, .shift]),
-        CommandSpec(id: "toggleAgentPanel", group: "View", title: "Toggle Agent Panel", nvim: "<leader>a agent", key: "a", mods: [.command, .shift]),
-        CommandSpec(id: "clearTerminal",group: "View",   title: "Clear Terminal",     nvim: "<C-l>     clear", key: "k", mods: .command),
-        CommandSpec(id: "fontBigger",   group: "View",   title: "Font Size Up",       nvim: "", key: "=", mods: .command),
-        CommandSpec(id: "fontSmaller",  group: "View",   title: "Font Size Down",     nvim: "", key: "-", mods: .command),
-        CommandSpec(id: "fontReset",    group: "View",   title: "Reset Font Size",    nvim: "", key: "0", mods: .command),
+        CommandSpec(id: "toggleSidebar",group: "View",   title: "Toggle Sidebar", key: "s", mods: [.command, .shift]),
+        CommandSpec(id: "toggleAgentPanel", group: "View", title: "Toggle Agent Panel", key: "a", mods: [.command, .shift]),
+        CommandSpec(id: "clearTerminal",group: "View",   title: "Clear Terminal", key: "k", mods: .command),
+        CommandSpec(id: "fontBigger",   group: "View",   title: "Font Size Up", key: "=", mods: .command),
+        CommandSpec(id: "fontSmaller",  group: "View",   title: "Font Size Down", key: "-", mods: .command),
+        CommandSpec(id: "fontReset",    group: "View",   title: "Reset Font Size", key: "0", mods: .command),
 
 
         // Layout & focus extras
-        CommandSpec(id: "moveTabLeft",   group: "Tabs",  title: "Move Tab Left",      nvim: ":tabm -1",  key: "[", mods: [.control, .option]),
-        CommandSpec(id: "moveTabRight",  group: "Tabs",  title: "Move Tab Right",     nvim: ":tabm +1",  key: "]", mods: [.control, .option]),
-        CommandSpec(id: "alternateTab",  group: "Tabs",  title: "Alternate Tab",      nvim: "<leader>bb last buffer", key: "0", mods: [.command, .option]),
-        CommandSpec(id: "newTabInCwd",   group: "Tabs",  title: "New Tab in CWD",     nvim: ":tcd | enew", key: "n", mods: [.command, .option]),
-        CommandSpec(id: "focusNextLeaf", group: "Panes", title: "Cycle Pane Forward", nvim: "<C-w>w", key: "]", mods: [.command, .shift]),
-        CommandSpec(id: "focusPrevLeaf", group: "Panes", title: "Cycle Pane Backward",nvim: "<C-w>W", key: "[", mods: [.command, .shift]),
-        CommandSpec(id: "zoomPaneToggle",group: "Panes", title: "Zoom Focused Pane",  nvim: "<C-w>_ | only", key: "z", mods: [.command, .option]),
-        CommandSpec(id: "closeOtherPanes", group: "Panes", title: "Close Other Panes", nvim: "<C-w>o :only", key: "w", mods: [.command, .option]),
+        CommandSpec(id: "moveTabLeft",   group: "Tabs",  title: "Move Tab Left",  key: "[", mods: [.control, .option]),
+        CommandSpec(id: "moveTabRight",  group: "Tabs",  title: "Move Tab Right",  key: "]", mods: [.control, .option]),
+        CommandSpec(id: "alternateTab",  group: "Tabs",  title: "Alternate Tab", key: "0", mods: [.command, .option]),
+        CommandSpec(id: "newTabInCwd",   group: "Tabs",  title: "New Tab in CWD", key: "n", mods: [.command, .option]),
+        CommandSpec(id: "focusNextLeaf", group: "Panes", title: "Cycle Pane Forward", key: "]", mods: [.command, .shift]),
+        CommandSpec(id: "focusPrevLeaf", group: "Panes", title: "Cycle Pane Backward", key: "[", mods: [.command, .shift]),
+        CommandSpec(id: "zoomPaneToggle",group: "Panes", title: "Zoom Focused Pane", key: "z", mods: [.command, .option]),
+        CommandSpec(id: "closeOtherPanes", group: "Panes", title: "Close Other Panes", key: "w", mods: [.command, .option]),
 
         // Theme / tree / terminal engine
-        CommandSpec(id: "themeCycleNext", group: "View", title: "Next Theme",         nvim: "<leader>th themes", key: "t", mods: [.command, .option]),
-        CommandSpec(id: "themeCyclePrev", group: "View", title: "Previous Theme",     nvim: "<leader>th reverse", key: "t", mods: [.command, .option, .shift]),
-        CommandSpec(id: "reloadFileTree", group: "View", title: "Reload File Tree",   nvim: "<C-l> NvimTreeRefresh", key: "e", mods: [.command, .shift]),
-        CommandSpec(id: "toggleMouseReporting", group: "View", title: "Toggle Mouse Reporting", nvim: "", key: "m", mods: [.command, .option]),
-        CommandSpec(id: "toggleOptionAsMeta",  group: "View", title: "Toggle Option as Meta",   nvim: "", key: "o", mods: [.command, .option]),
-        CommandSpec(id: "clearScrollbackOnly",  group: "View", title: "Clear Scrollback Only",  nvim: "", key: "k", mods: [.command, .option]),
-        CommandSpec(id: "copyActivePath", group: "View",    title: "Copy Active Path",   nvim: "<leader>pa path", key: "c", mods: [.command, .option]),
-        CommandSpec(id: "minimizeWindow", group: "View",    title: "Minimize Window",    nvim: "", key: "m", mods: .command),
-        CommandSpec(id: "toggleDotFiles", group: "View",    title: "Toggle Dot Files",   nvim: "", key: ".", mods: .command),
+        CommandSpec(id: "themeCycleNext", group: "View", title: "Next Theme", key: "t", mods: [.command, .option]),
+        CommandSpec(id: "themeCyclePrev", group: "View", title: "Previous Theme", key: "t", mods: [.command, .option, .shift]),
+        CommandSpec(id: "reloadFileTree", group: "View", title: "Reload File Tree", key: "e", mods: [.command, .shift]),
+        CommandSpec(id: "toggleMouseReporting", group: "View", title: "Toggle Mouse Reporting", key: "m", mods: [.command, .option]),
+        CommandSpec(id: "toggleOptionAsMeta",  group: "View", title: "Toggle Option as Meta", key: "o", mods: [.command, .option]),
+        CommandSpec(id: "clearScrollbackOnly",  group: "View", title: "Clear Scrollback Only", key: "k", mods: [.command, .option]),
+        CommandSpec(id: "copyActivePath", group: "View",    title: "Copy Active Path", key: "c", mods: [.command, .option]),
+        CommandSpec(id: "minimizeWindow", group: "View",    title: "Minimize Window", key: "m", mods: .command),
+        CommandSpec(id: "toggleDotFiles", group: "View",    title: "Toggle Dot Files", key: ".", mods: .command),
 
         // Special Characters
-        CommandSpec(id: "insertSpecialChar", group: "Edit", title: "Insert Special Character", nvim: "", key: "s", mods: [.command, .control]),
-        CommandSpec(id: "insertMu", group: "Edit", title: "Insert µ (micro)", nvim: "", key: "m", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertApprox", group: "Edit", title: "Insert ≈ (approx)", nvim: "", key: "a", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertCedilla", group: "Edit", title: "Insert ç (cedilla)", nvim: "", key: "c", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertIntegral", group: "Edit", title: "Insert ∫ (integral)", nvim: "", key: "i", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertTilde", group: "Edit", title: "Insert ~ (tilde)", nvim: "", key: "`", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertLessEqual", group: "Edit", title: "Insert ≤ (less-equal)", nvim: "", key: ",", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertPi", group: "Edit", title: "Insert π (pi)", nvim: "", key: "p", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertBullet", group: "Edit", title: "Insert • (bullet)", nvim: "", key: "8", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertSection", group: "Edit", title: "Insert § (section)", nvim: "", key: "6", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertInfinity", group: "Edit", title: "Insert ∞ (infinity)", nvim: "", key: "5", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertCent", group: "Edit", title: "Insert ¢ (cent)", nvim: "", key: "4", mods: [.command, .control, .option]),
-        CommandSpec(id: "insertPound", group: "Edit", title: "Insert £ (pound)", nvim: "", key: "3", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertSpecialChar", group: "Edit", title: "Insert Special Character", key: "s", mods: [.command, .control]),
+        CommandSpec(id: "insertMu", group: "Edit", title: "Insert µ (micro)", key: "m", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertApprox", group: "Edit", title: "Insert ≈ (approx)", key: "a", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertCedilla", group: "Edit", title: "Insert ç (cedilla)", key: "c", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertIntegral", group: "Edit", title: "Insert ∫ (integral)", key: "i", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertTilde", group: "Edit", title: "Insert ~ (tilde)", key: "`", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertLessEqual", group: "Edit", title: "Insert ≤ (less-equal)", key: ",", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertPi", group: "Edit", title: "Insert π (pi)", key: "p", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertBullet", group: "Edit", title: "Insert • (bullet)", key: "8", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertSection", group: "Edit", title: "Insert § (section)", key: "6", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertInfinity", group: "Edit", title: "Insert ∞ (infinity)", key: "5", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertCent", group: "Edit", title: "Insert ¢ (cent)", key: "4", mods: [.command, .control, .option]),
+        CommandSpec(id: "insertPound", group: "Edit", title: "Insert £ (pound)", key: "3", mods: [.command, .control, .option]),
 
         // Editor
-        CommandSpec(id: "editorSave",   group: "Editor", title: "Save File",          nvim: "<leader>w / <C-s>", key: "s", mods: .command),
-        CommandSpec(id: "editorRevert", group: "Editor", title: "Revert File",        nvim: ":e!",       key: "r", mods: [.command, .option]),
+        CommandSpec(id: "editorSave",   group: "Editor", title: "Save File", key: "s", mods: .command),
+        CommandSpec(id: "editorRevert", group: "Editor", title: "Revert File",       key: "r", mods: [.command, .option]),
 
         // More editing
-        CommandSpec(id: "cut",          group: "Edit",   title: "Cut",                nvim: "+x", key: "x", mods: .command),
-        CommandSpec(id: "selectAll",    group: "Edit",   title: "Select All",         nvim: "ggVG", key: "a", mods: .command),
-        CommandSpec(id: "undo",         group: "Edit",   title: "Undo",               nvim: "u",     key: "z", mods: .command),
-        CommandSpec(id: "redo",         group: "Edit",   title: "Redo",               nvim: "<C-r>", key: "z", mods: [.command, .shift]),
+        CommandSpec(id: "cut",          group: "Edit",   title: "Cut", key: "x", mods: .command),
+        CommandSpec(id: "selectAll",    group: "Edit",   title: "Select All", key: "a", mods: .command),
+        CommandSpec(id: "undo",         group: "Edit",   title: "Undo",     key: "z", mods: .command),
+        CommandSpec(id: "redo",         group: "Edit",   title: "Redo", key: "z", mods: [.command, .shift]),
 
         // Go to tab ({n}gt)
     ] + (1...9).map { n in
         CommandSpec(id: "goToTab.\(n)", group: "Go to Tab",
-                    title: "Go to Tab \(n)", nvim: "\(n)gt",
+                    title: "Go to Tab \(n)",
                     key: "\(n)", mods: .command)
     }
 
@@ -450,14 +528,33 @@ final class TerminalController: ObservableObject {
     private func installGlobalShortcuts() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // Monitors deliver on the same main runloop that installed them.
-            guard let self,
-                  let win = NSApp.keyWindow ?? NSApp.mainWindow,
-                  !windowContains(win, SettingsMarkerView.self),
-                  self.keyBindings.contains(where: { self.actionId(for: $0) == "closePane" && $0.matches(event: event) })
-            else { return event }
-            self.closeFocusedPane()
-            return nil // swallowed before responder chain / menus see it
+            guard let self else { return event }
+            // App-level command shortcut: ⌘W closes the focused pane, not the
+            // window. Swallowed before the responder chain / menus see it.
+            if event.modifierFlags.contains(.command),
+               let win = NSApp.keyWindow ?? NSApp.mainWindow,
+               !windowContains(win, SettingsMarkerView.self),
+               self.keyBindings.contains(where: { self.actionId(for: $0) == "closePane" && $0.matches(event: event) }) {
+                self.closeFocusedPane()
+                return nil
+            }
+            // Forward every other keystroke to the focused pty — INCLUDING the
+            // OS auto-repeat events (event.isARepeat) emitted while a key is
+            // held — so holding h/j/k/l scrolls nvim exactly like a native
+            // terminal. Only plain printable keys are intercepted here; modifier
+            // and special keys (⌘-combos, arrows, Tab, Enter, Esc…) fall through
+            // to SwiftTerm's keyDown for correct translation. We act only when
+            // the terminal view is the first responder, so text fields (Settings,
+            // sidebar search, in-app editor) keep working normally.
+            if let win = NSApp.keyWindow ?? NSApp.mainWindow,
+               let tv = win.firstResponder as? LocalProcessTerminalView,
+               event.modifierFlags.isDisjoint(with: [.command, .control, .option, .function]),
+               let chars = event.characters, chars.count == 1,
+               !chars.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) {
+                tv.send(txt: chars)
+                return nil
+            }
+            return event
         }
     }
 
@@ -482,10 +579,24 @@ final class TerminalController: ObservableObject {
         closeOnExit            = d.object(forKey: "closeOnExit") as? Bool ?? closeOnExit
         sidebarCollapsed       = d.object(forKey: "sidebarCollapsed") as? Bool ?? sidebarCollapsed
         showAgentPanel         = d.object(forKey: "showAgentPanel") as? Bool ?? showAgentPanel
+        liquidGlass            = (d.object(forKey: "liquidGlass") as? Bool) ?? true
         sidebarWidth           = d.object(forKey: "sidebarWidth") as? Double ?? sidebarWidth
         terminalPadding        = d.object(forKey: "terminalPadding2") as? Double ?? terminalPadding
         windowMaterialRaw      = d.string(forKey: "windowMaterialRaw") ?? windowMaterialRaw
         windowBackgroundOpacity = d.object(forKey: "windowBackgroundOpacity") as? Double ?? windowBackgroundOpacity
+        themeColorOverrides   = (d.dictionary(forKey: "themeColorOverrides") as? [String: [String: String]]) ?? [:]
+        if let data = d.data(forKey: "sidebarProjects"),
+           let decoded = try? JSONDecoder().decode([SidebarProject].self, from: data) {
+            projects = decoded
+        } else {
+            projects = []
+        }
+        if let data = d.data(forKey: "sshConnections"),
+           let decoded = try? JSONDecoder().decode([SSHConnection].self, from: data) {
+            sshConnections = decoded
+        } else {
+            sshConnections = []
+        }
         if let paths = d.array(forKey: "expandedPaths") as? [String] {
             expandedPaths = Set(paths)
         }
@@ -530,7 +641,10 @@ final class TerminalController: ObservableObject {
         d.set(sidebarWidth, forKey: "sidebarWidth")
         d.set(terminalPadding, forKey: "terminalPadding2")
         d.set(windowMaterialRaw, forKey: "windowMaterialRaw")
+        if let data = try? JSONEncoder().encode(projects) { d.set(data, forKey: "sidebarProjects") }
+        if let data = try? JSONEncoder().encode(sshConnections) { d.set(data, forKey: "sshConnections") }
         d.set(windowBackgroundOpacity, forKey: "windowBackgroundOpacity")
+        d.set(themeColorOverrides, forKey: "themeColorOverrides")
         if let data = try? JSONEncoder().encode(keyBindings) {
             d.set(data, forKey: "keyBindings")
         }
@@ -542,14 +656,17 @@ final class TerminalController: ObservableObject {
 
     func resetAllSettings() {
         let d = UserDefaults.standard
-        for k in ["themeName","backgroundAlpha","fontName","fontSize","cursorShapeRaw","cursorBlink",
+        for k in ["themeName","backgroundAlpha","fontName","fontSize","cursorShapeRaw","cursorBlink","themeColorOverrides",
                   "useBrightColors","scrollback","optionAsMetaKey","allowMouseReporting",
                   "backspaceSendsControlH","ansi256Raw","shellPath","startupDirRaw","closeOnExit",
                   "sidebarCollapsed","showAgentPanel","sidebarWidth","terminalPadding2","colorOverrides","keyBindings",
-                  "windowMaterialRaw","windowBackgroundOpacity"] {
+                  "windowMaterialRaw","windowBackgroundOpacity","sidebarProjects","sshConnections",
+                  "liquidGlass"] {
             d.removeObject(forKey: k)
         }
+        ProviderRegistry.shared.resetToBuiltIns()
         restore()
+        agenticSystem.reloadProvider()
         objectWillChange.send()
     }
 
@@ -749,6 +866,16 @@ final class TerminalController: ObservableObject {
             NSSound.beep()
             return
         }
+        // Reuse an existing editor tab for the same file (avoids spawning a new
+        // tab every time the row is clicked).
+        if let existing = sessions.first(where: {
+            if case .editor(let f) = $0.kind { return f.standardizedFileURL == url.standardizedFileURL }
+            return false
+        }), let tab = tabs.first(where: { $0.layout.sessionIds.contains(existing.id) }) {
+            activeTabId = tab.id
+            focusedSessionId = existing.id
+            return
+        }
         let title = url.lastPathComponent
         let session = Session(title: title, cwd: url.deletingLastPathComponent().path,
                               profile: "Local", kind: .editor(fileURL: url))
@@ -767,7 +894,7 @@ final class TerminalController: ObservableObject {
         views[id]?.clearScrollback()
     }
     /// Build the SwiftUI `KeyboardShortcut` for a command id, or `nil` if
-    /// unassigned. Space (" ") maps to SwiftUI's `.space` key (nvim leader).
+    /// unassigned. Space (" ") maps to SwiftUI's `.space` key (leader key).
     func keyboardShortcut(for id: String) -> KeyboardShortcut? {
         guard let b = keyBindings.first(where: { $0.id == id }), !b.key.isEmpty else { return nil }
         let key: KeyEquivalent
@@ -920,7 +1047,7 @@ final class TerminalController: ObservableObject {
         activate(next)
     }
 
-    private func goToTab(_ n: Int) {
+    func goToTab(_ n: Int) {
         guard tabs.indices.contains(n - 1) else { return }
         activate(tabs[n - 1])
     }
@@ -1000,7 +1127,7 @@ final class TerminalController: ObservableObject {
     }
     enum FocusDirection { case left, right, up, down }
 
-    /// Move focus across the split tree like nvim's `<C-w>h/j/k/l`: cross the
+    /// Move focus across the split tree using arrow-style h/j/k/l: cross the
     /// deepest split that separates the focused pane from the target side,
     /// then land on the sibling leaf nearest the shared edge.
     func focusNeighbor(_ dir: FocusDirection) {
@@ -1087,6 +1214,9 @@ final class TerminalController: ObservableObject {
             sessions[i].color = color
         }
     }
+
+    deinit {
+    }
 }
 
 /// Per-theme user color overrides (hex strings, missing = use theme default).
@@ -1116,5 +1246,25 @@ extension NSColor {
                   blue: CGFloat(v & 0xff) / 255,
                   alpha: 1)
     }
+}
+
+/// Directory pinned as a project from the sidebar tree.
+struct SidebarProject: Identifiable, Codable {
+    let id: UUID
+    var path: String
+    var name: String
+    var colorHex: String
+}
+
+/// Saved SSH connection (persisted). Passwords are intentionally NOT stored —
+/// `ssh` prompts interactively inside the terminal pty, so auth uses keys or a
+/// live password prompt.
+struct SSHConnection: Identifiable, Codable, Equatable {
+    var id: UUID
+    var name: String
+    var host: String
+    var user: String
+    var port: Int
+    var identityFile: String?
 }
 

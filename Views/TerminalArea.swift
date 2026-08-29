@@ -29,16 +29,19 @@ struct TerminalArea: View {
                     )
                 } else {
                     return AnyView(
-                        TerminalViewRepresentable(sessionId: id, controller: controller)
-                            .id(id)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: GlassMetrics.radius, style: .continuous))
-                            .padding(controller.terminalPadding)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: GlassMetrics.radius, style: .continuous)
-                                    .stroke(controller.focusedSessionId == id ? Color(nsColor: .separatorColor) : Color.clear,
-                                            lineWidth: 1)
-                            )
+                        VStack(spacing: 0) {
+                            TerminalViewRepresentable(sessionId: id, controller: controller)
+                                .id(id)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: GlassMetrics.radius, style: .continuous))
+                        .padding(controller.terminalPadding)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: GlassMetrics.radius, style: .continuous)
+                                .stroke(controller.focusedSessionId == id ? Color(nsColor: .separatorColor) : Color.clear,
+                                        lineWidth: 1)
+                        )
                     )
                 }
             } else {
@@ -53,3 +56,4 @@ struct TerminalArea: View {
         }
     }
 }
+

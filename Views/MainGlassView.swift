@@ -15,20 +15,28 @@ enum GlassMetrics {
 
 /// Liquid-glass surface (macOS 26 native) with an NSVisualEffectView fallback
 /// for the 15.0 deployment target.
+/// Glass chrome, gated by `glass`. On = macOS 26 Liquid Glass (or
+/// `NSVisualEffectView` vibrancy on 15); off = a flat theme surface so the
+/// existing non-glass appearance is preserved.
 extension View {
     @ViewBuilder
-    func glassPanel(cornerRadius: CGFloat = GlassMetrics.radius) -> some View {
-        if #available(macOS 26, *) {
-            self.glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        } else {
-            self.background(
-                VisualEffectView(
-                    material: NSVisualEffectView.Material.sidebar,
-                    blendingMode: NSVisualEffectView.BlendingMode.withinWindow
+    func glassPanel(glass: Bool, cornerRadius: CGFloat = GlassMetrics.radius) -> some View {
+        if glass {
+            if #available(macOS 26, *) {
+                self.glassEffect(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            } else {
+                self.background(
+                    VisualEffectView(
+                        material: NSVisualEffectView.Material.sidebar,
+                        blendingMode: NSVisualEffectView.BlendingMode.withinWindow
+                    )
+                    .cornerRadius(cornerRadius)
                 )
                 .cornerRadius(cornerRadius)
-            )
-            .cornerRadius(cornerRadius)
+            }
+        } else {
+            self.background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                .cornerRadius(cornerRadius)
         }
     }
 }
@@ -47,12 +55,12 @@ struct MainGlassView: View {
                     Sidebar()
                         .frame(width: controller.sidebarCollapsed ? 0 : controller.sidebarWidth)
                         .opacity(controller.sidebarCollapsed ? 0 : 1)
-                        .glassPanel()
+                        .glassPanel(glass: controller.liquidGlass)
                         .clipped()
                         .padding(.trailing, controller.sidebarCollapsed ? 0 : GlassMetrics.gap)
                     
                     TerminalArea()
-                        .glassPanel()
+                        .glassPanel(glass: controller.liquidGlass)
                         .layoutPriority(1)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -61,7 +69,7 @@ struct MainGlassView: View {
                 // Agent Panel - Full height overlay on the right
                 if controller.showAgentPanel {
                     AgentPanelMain()
-                        .glassPanel()
+                        .glassPanel(glass: controller.liquidGlass)
                         .frame(width: 420)
                         .frame(maxHeight: .infinity)
                         .padding(.trailing, GlassMetrics.margin)

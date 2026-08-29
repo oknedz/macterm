@@ -15,8 +15,6 @@ struct EditorView: View {
     @Binding var buffer: EditorBuffer
     @EnvironmentObject private var controller: TerminalController
 
-    @State private var vimMode = false
-    @State private var vimNormal = false
     private var isModified: Bool { buffer.content != buffer.original }
 
     /// Map a file extension to a Highlightr language id. Unknown → nil (plain text).
@@ -52,20 +50,12 @@ struct EditorView: View {
                 }
                 Button("Save") { save() }.disabled(!isModified)
                 Button("Revert") { revert() }.disabled(!isModified)
-                Divider()
-                Toggle("VIM", isOn: $vimMode)
-                    .toggleStyle(.button)
-                    .controlSize(.small)
-                Text(vimNormal ? "-- NORMAL --" : "-- INSERT --")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(vimNormal ? .green : .secondary)
-                    .opacity(vimMode ? 1 : 0.4)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(Color(nsColor: controller.backgroundColor).opacity(0.5))
             Divider()
-            HighlightingEditor(text: $buffer.content, language: language, vimMode: vimMode, vimNormal: $vimNormal)
+            HighlightingEditor(text: $buffer.content, language: language)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.clear)
@@ -93,14 +83,12 @@ struct HighlightingEditor: NSViewRepresentable {
     @Binding var text: String
     let language: String?
     @EnvironmentObject private var controller: TerminalController
-    var vimMode: Bool = false
-    var vimNormal: Binding<Bool> = .constant(false)
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         scroll.hasVerticalScroller = true
         let old = scroll.documentView as! NSTextView
-        let tv = VimModeTextView()
+        let tv = NSTextView()
         tv.textContainer = old.textContainer
         tv.isEditable = true
         tv.isRichText = true
@@ -114,12 +102,6 @@ struct HighlightingEditor: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.tv = tv
         coordinator.parent = self
-        tv.onModeChange = { [weak coordinator] normal in
-            coordinator?.parent?.vimNormal.wrappedValue = normal
-        }
-        tv.vimEnabled = vimMode
-        tv.normalMode = vimMode
-        tv.wasVimEnabled = vimMode
         _ = context.coordinator.syncTheme()
         coordinator.apply(text)
         return scroll
@@ -127,11 +109,7 @@ struct HighlightingEditor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        let tv = nsView.documentView as! VimModeTextView
-        tv.vimEnabled = vimMode
-        if vimMode && !tv.wasVimEnabled { tv.normalMode = true }
-        tv.wasVimEnabled = vimMode
-        if !vimMode { tv.normalMode = false }
+        let tv = nsView.documentView as! NSTextView
         context.coordinator.applyAppearance(tv)
         let themeChanged = context.coordinator.syncTheme()
         if themeChanged || tv.string != text {
@@ -237,107 +215,3 @@ struct HighlightingEditor: NSViewRepresentable {
     }
 }
 
-/// NSTextView subclass adding a bounded vim modal layer for the in-app editor.
-/// When `vimEnabled` is off it behaves exactly like a plain editable text view.
-/// When on and in normal mode, printable keys are interpreted as vim
-/// motions/operators instead of inserting text:
-///   h j k l  move · w b e  word · 0 $  line edges · gg G  file edges
-///   i a A I  enter insert · o  open line below · x  delete char
-///   D  delete to EOL · dd  delete line · Esc  return to normal
-final class VimModeTextView: NSTextView {
-    var vimEnabled = false
-    var normalMode = false
-    var wasVimEnabled = false
-    var pendingD = false
-    var pendingG = false
-    var onModeChange: ((Bool) -> Void)?
-
-    override func keyDown(with event: NSEvent) {
-        // Esc always returns to normal mode while vim is active.
-        if vimEnabled && event.keyCode == 53 {
-            setNormal(true)
-            return
-        }
-        // Outside vim, in insert mode, or with a system modifier: default behavior.
-        if !vimEnabled || !normalMode
-           || event.modifierFlags.contains(.command)
-           || event.modifierFlags.contains(.control)
-           || event.modifierFlags.contains(.option) {
-            super.keyDown(with: event)
-            return
-        }
-
-        let ch = event.charactersIgnoringModifiers ?? ""
-        if ch != "d" { pendingD = false }
-        if ch != "g" { pendingG = false }
-
-        switch ch {
-        case "i": setNormal(false)
-        case "a": setNormal(false); moveRight(nil)
-        case "A": moveToEndOfLine(nil); setNormal(false)
-        case "I": moveToBeginningOfLine(nil); setNormal(false)
-        case "o": moveToEndOfLine(nil); insertText("\n", replacementRange: selectedRange()); setNormal(false)
-        case "h": moveLeft(nil)
-        case "l": moveRight(nil)
-        case "j": moveDown(nil)
-        case "k": moveUp(nil)
-        case "0": moveToBeginningOfLine(nil)
-        case "$": moveToEndOfLine(nil)
-        case "w": moveWordForward(nil)
-        case "b": moveWordBackward(nil)
-        case "e": moveToEndOfWord()
-        case "x": deleteForward(nil)
-        case "D": deleteToEndOfLine()
-        case "d":
-            if pendingD { pendingD = false; deleteLine() }
-            else { pendingD = true }
-        case "g":
-            if pendingG { pendingG = false; moveToBeginningOfDocument(nil) }
-            else { pendingG = true }
-        case "G": moveToEndOfDocument(nil)
-        default:
-            break
-        }
-    }
-
-    private func setNormal(_ normal: Bool) {
-        normalMode = normal
-        pendingD = false
-        pendingG = false
-        onModeChange?(normal)
-    }
-
-    private func deleteLine() {
-        guard let storage = textStorage else { return }
-        let str = storage.string as NSString
-        let line = str.lineRange(for: selectedRange())
-        let loc = line.location
-        storage.replaceCharacters(in: line, with: "")
-        setSelectedRange(NSRange(location: min(loc, storage.length), length: 0))
-    }
-
-    private func deleteToEndOfLine() {
-        guard let storage = textStorage else { return }
-        let str = storage.string as NSString
-        let sel = selectedRange()
-        let line = str.lineRange(for: sel)
-        let end = (line.upperBound > 0 && str.character(at: line.upperBound - 1) == 10)
-            ? line.upperBound - 1 : line.upperBound
-        let from = sel.location
-        if end > from {
-            storage.replaceCharacters(in: NSRange(location: from, length: end - from), with: "")
-        }
-        setSelectedRange(NSRange(location: from, length: 0))
-    }
-    private func moveToEndOfWord() {
-        guard let storage = textStorage else { return }
-        let str = storage.string as NSString
-        let len = str.length
-        var loc = selectedRange().location
-        if loc >= len { return }
-        let word = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
-        while loc < len && !word.contains(Unicode.Scalar(str.character(at: loc))!) { loc += 1 }
-        while loc < len && word.contains(Unicode.Scalar(str.character(at: loc))!) { loc += 1 }
-        setSelectedRange(NSRange(location: min(loc, len), length: 0))
-    }
-}

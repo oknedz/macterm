@@ -1,5 +1,7 @@
 // Copyright © 2026 Zdenko. All rights reserved.
 import Foundation
+import Security
+import FoundationModels
 import SwiftUI
 
 /// Core agentic system for macterm integration
@@ -20,9 +22,14 @@ class AgenticSystem: ObservableObject {
     private let toolRegistry: ToolRegistry
     private let extensionSystem: ExtensionSystem
 
-    /// LLM provider for response generation. Swap to a real provider (e.g. swift-ai-sdk)
-    /// without touching any call site in `AgenticSystem`.
-    var provider: AgentProvider = CloudAgentProvider.detected()
+    /// LLM provider for response generation. Rebuilt from the active ProviderRegistry
+    /// config whenever the user changes providers/keys in Settings.
+    var provider: AgentProvider = ProviderRegistry.shared.makeActive()
+    /// Rebuild `provider` from the active ProviderRegistry config. Call after the
+    /// user changes the selected provider, its key, or its model in Settings.
+    func reloadProvider() {
+        provider = ProviderRegistry.shared.makeActive()
+    }
     
     // MARK: - Initialization
     @MainActor
@@ -52,48 +59,56 @@ class AgenticSystem: ObservableObject {
     // MARK: - Public API
     func processUserInput(_ input: String, context: AgentContext) async {
         workflowState = .analyzing
-        
-        // Add user message to conversation
-        let userMessage = AgentMessage(
-            role: .user,
-            content: input,
-            timestamp: Date(),
-            toolCalls: []
-        )
+
+        let userMessage = AgentMessage(role: .user, content: input, timestamp: Date(), toolCalls: [])
         conversationHistory.append(userMessage)
-        
-        // Analyze intent from user input
+
         let intent = analyzeIntent(from: input)
-        
-        // Find relevant tools based on intent
         let relevantTools = extensionSystem.getTools().filter { $0.supportsIntent(intent) }
-        
-        // Execute relevant tools if available
         var toolResults: [ToolResult] = []
         if !relevantTools.isEmpty {
             toolResults = await executeTools(relevantTools, input: input, context: context)
         }
-        
-        // Generate AI response
-        let aiResponse = await provider.generateResponse(
-            input: input,
-            intent: intent,
-            toolResults: toolResults,
-            context: context
-        )
-        
-        // Add AI response to conversation
-        let assistantMessage = AgentMessage(
+
+        // Stream the assistant reply live into the conversation.
+        let assistant = AgentMessage(
             role: .assistant,
-            content: aiResponse.text,
+            content: "",
             timestamp: Date(),
-            toolCalls: toolResults.map { ToolCall(id: UUID().uuidString, name: $0.toolName, parameters: [:], result: $0.error?.localizedDescription ?? ($0.result.map { String(describing: $0) })) }
+            toolCalls: toolResults.map {
+                ToolCall(id: UUID().uuidString, name: $0.toolName, parameters: [:],
+                         result: $0.error?.localizedDescription ?? ($0.result.map { String(describing: $0) }))
+            }
         )
-        conversationHistory.append(assistantMessage)
-        
+        conversationHistory.append(assistant)
+        let assistantId = assistant.id
+
+        workflowState = .executing
+        do {
+            for try await piece in provider.streamResponse(
+                input: input, intent: intent, toolResults: toolResults, context: context
+            ) {
+                if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
+                    let cur = conversationHistory[i]
+                    conversationHistory[i] = AgentMessage(
+                        role: .assistant, content: cur.content + piece,
+                        timestamp: cur.timestamp, toolCalls: cur.toolCalls
+                    )
+                }
+            }
+        } catch {
+            if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
+                let cur = conversationHistory[i]
+                let note = "⚠️ \(error.localizedDescription)"
+                conversationHistory[i] = AgentMessage(
+                    role: .assistant,
+                    content: cur.content.isEmpty ? note : cur.content + "\n\n" + note,
+                    timestamp: cur.timestamp, toolCalls: cur.toolCalls
+                )
+            }
+        }
+
         workflowState = .completing
-        
-        // Reset to idle after a brief moment to show completion
         try? await Task.sleep(nanoseconds: 500_000_000)
         workflowState = .idle
     }
@@ -303,25 +318,265 @@ func extractThemeName(from input: String) -> String? {
 
 /// Abstraction over the LLM that turns user input + tool results into a response.
 /// `MockProvider` is the local default; a real provider (e.g. swift-ai-sdk) can
-/// conform to this without changing any call site in `AgenticSystem`.
-@MainActor
-protocol AgentProvider {
-    func generateResponse(
-        input: String,
-        intent: AgentIntent,
-        toolResults: [ToolResult],
-        context: AgentContext
-    ) async -> AIResponse
+// MARK: - Provider errors (surfaced to the UI instead of silently mocking)
+
+enum AgentProviderError: LocalizedError {
+    case missingKey
+    case unauthorized
+    case rateLimited
+    case network(Error)
+    case unavailable
+    case parseFailed
+    case empty
+    case unknown(status: Int, body: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingKey:       return "Missing API key — add it in Settings → AI."
+        case .unauthorized:     return "Invalid or unauthorized API key (401)."
+        case .rateLimited:      return "Rate limited by the provider (429). Try again shortly."
+        case .network(let e):   return "Network error: \(e.localizedDescription)"
+        case .unavailable:      return "This model/provider is unavailable on this device."
+        case .parseFailed:      return "Could not parse the provider response."
+        case .empty:            return "The provider returned an empty response."
+        case .unknown(let s, let b): return "Provider error (\(s)): \(String(b.prefix(200)))"
+        }
+    }
 }
 
-/// Local placeholder: returns canned, intent-shaped text. No network / keys.
+// MARK: - Provider model (data-driven, user-managed)
+
+enum ProviderType: String, Codable, CaseIterable, Identifiable {
+    case mock, openrouter, openAICompatible, foundation, huggingface, omp
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .mock: return "Mock (offline)"
+        case .openrouter: return "OpenRouter"
+        case .openAICompatible: return "OpenAI-compatible (local / custom)"
+        case .foundation: return "Apple on-device (FoundationModels)"
+        case .huggingface: return "HuggingFace"
+        case .omp: return "OMP Agent"
+        }
+    }
+    var needsBaseURL: Bool { self == .openAICompatible || self == .huggingface }
+    var needsKey: Bool { self == .openrouter || self == .huggingface }
+    var canListModels: Bool { self == .openrouter || self == .openAICompatible }
+    var supportsStreaming: Bool { self == .openrouter || self == .openAICompatible || self == .foundation }
+    var requiresmacOS26: Bool { self == .foundation }
+}
+
+struct ProviderConfig: Identifiable, Codable, Hashable {
+    var id: String
+    var name: String
+    var type: ProviderType
+    var baseURL: String
+    var keychainKey: String
+    var isBuiltIn: Bool
+    var staticModels: [String]
+    var selectedModel: String
+    var temperature: Double
+    var maxTokens: Int
+    var supportsStreaming: Bool
+
+    init(id: String = UUID().uuidString, name: String, type: ProviderType,
+         baseURL: String = "", keychainKey: String = "", isBuiltIn: Bool = false,
+         staticModels: [String] = [], selectedModel: String = "",
+         temperature: Double = 0.3, maxTokens: Int = 1024, supportsStreaming: Bool? = nil) {
+        self.id = id; self.name = name; self.type = type; self.baseURL = baseURL
+        self.keychainKey = keychainKey; self.isBuiltIn = isBuiltIn
+        self.staticModels = staticModels; self.selectedModel = selectedModel
+        self.temperature = temperature; self.maxTokens = maxTokens
+        self.supportsStreaming = supportsStreaming ?? type.supportsStreaming
+    }
+
+    /// Resolved API key from the Keychain (nil for local/none).
+    var apiKey: String? { keychainKey.isEmpty ? nil : KeychainStore.get(keychainKey) }
+
+    /// Model id to send when none is selected, per provider type.
+    var effectiveModel: String {
+        if !selectedModel.isEmpty { return selectedModel }
+        switch type {
+        case .openrouter: return "openai/gpt-4o-mini"
+        case .openAICompatible: return staticModels.first ?? "local-model"
+        case .huggingface: return staticModels.first ?? ""
+        case .foundation: return "system"
+        default: return ""
+        }
+    }
+}
+
+// MARK: - Keychain (no third-party deps)
+
+enum KeychainStore {
+    static func set(_ value: String, for account: String) {
+        let data = Data(value.utf8)
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrAccount as String: account,
+                                kSecValueData as String: data]
+        SecItemDelete(q as CFDictionary)
+        SecItemAdd(q as CFDictionary, nil)
+    }
+    static func get(_ account: String) -> String? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrAccount as String: account,
+                                kSecReturnData as String: true,
+                                kSecMatchLimit as String: kSecMatchLimitOne]
+        var ref: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &ref) == errSecSuccess,
+              let data = ref as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    static func delete(_ account: String) {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrAccount as String: account]
+        SecItemDelete(q as CFDictionary)
+    }
+}
+
+// MARK: - Provider registry (persisted, user-editable)
+
+@MainActor
+final class ProviderRegistry: ObservableObject {
+    static let shared = ProviderRegistry()
+    @Published var providers: [ProviderConfig] = []
+    @Published var selectedId: String = ""
+    private let storeKey = "macterm.providers.v1"
+
+    init() { migrateLegacyKeys(); load() }
+
+    /// Seed built-in providers and migrate the legacy UserDefaults key/model.
+    private func migrateLegacyKeys() {
+        if let legacy = UserDefaults.standard.string(forKey: "openRouterKey"), !legacy.isEmpty {
+            KeychainStore.set(legacy, for: "openrouter")
+            UserDefaults.standard.removeObject(forKey: "openRouterKey")
+        }
+    }
+
+    var active: ProviderConfig {
+        providers.first(where: { $0.id == selectedId })
+            ?? providers.first
+            ?? ProviderConfig.builtIns.first!
+    }
+
+    func select(_ id: String) {
+        selectedId = id
+        UserDefaults.standard.set(id, forKey: "macterm.selectedProvider")
+    }
+    func add(_ c: ProviderConfig) { providers.append(c); save() }
+    func update(_ c: ProviderConfig) {
+        if let i = providers.firstIndex(where: { $0.id == c.id }) { providers[i] = c; save() }
+    }
+    func remove(_ c: ProviderConfig) {
+        guard !c.isBuiltIn else { return }
+        providers.removeAll { $0.id == c.id }
+        save()
+    }
+    func save() {
+        if let d = try? JSONEncoder().encode(providers) {
+            UserDefaults.standard.set(d, forKey: storeKey)
+        }
+    }
+    func load() {
+        if let d = UserDefaults.standard.data(forKey: storeKey),
+           let list = try? JSONDecoder().decode([ProviderConfig].self, from: d), !list.isEmpty {
+            providers = list
+        } else {
+            providers = ProviderConfig.builtIns
+        }
+        selectedId = UserDefaults.standard.string(forKey: "macterm.selectedProvider")
+            ?? providers.first(where: { $0.type != .mock })?.id
+            ?? providers.first!.id
+    }
+
+    /// Build the live AgentProvider for the active config.
+    func makeActive() -> AgentProvider { AgentProviderFactory.make(active) }
+
+    /// Wipe user-added providers and restore the built-in set (used by Reset All Settings).
+    func resetToBuiltIns() {
+        UserDefaults.standard.removeObject(forKey: storeKey)
+        UserDefaults.standard.removeObject(forKey: "macterm.selectedProvider")
+        load()
+    }
+}
+
+extension ProviderConfig {
+    static let builtIns: [ProviderConfig] = [
+        ProviderConfig(name: "Mock (offline)", type: .mock, isBuiltIn: true),
+        ProviderConfig(name: "OpenRouter", type: .openrouter,
+                       baseURL: "https://openrouter.ai/api/v1", keychainKey: "openrouter",
+                       isBuiltIn: true,
+                       selectedModel: UserDefaults.standard.string(forKey: "aiModel") ?? "openai/gpt-4o-mini"),
+        ProviderConfig(name: "Apple on-device", type: .foundation, isBuiltIn: true, selectedModel: "system"),
+        ProviderConfig(name: "HuggingFace", type: .huggingface,
+                       baseURL: "https://api-inference.huggingface.co", keychainKey: "huggingface",
+                       isBuiltIn: true,
+                       staticModels: ["meta-llama/Llama-3.1-8B-Instruct"],
+                       selectedModel: "meta-llama/Llama-3.1-8B-Instruct"),
+        ProviderConfig(name: "Local (Ollama / LM Studio)", type: .openAICompatible,
+                       baseURL: "http://localhost:11434/v1", isBuiltIn: true)
+    ]
+}
+
+// MARK: - Provider protocol (streaming by default)
+
+@MainActor
+protocol AgentProvider {
+    var config: ProviderConfig { get }
+    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse
+    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error>
+}
+
+extension AgentProvider {
+    /// Default streaming: wrap the non-streaming call as a single token.
+    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let r = try await generateResponse(input: input, intent: intent, toolResults: toolResults, context: context)
+                    continuation.yield(r.text)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Shared prompt/message builders
+
+private func buildChatMessages(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> [[String: String]] {
+    var m: [[String: String]] = []
+    m.append(["role": "system",
+              "content": "You are \(ProcessInfo.processInfo.processName)'s built-in assistant for terminal, file, theme and session tasks. Be concise and concrete."])
+    if !toolResults.isEmpty {
+        let summary = toolResults.map { r -> String in
+            if let e = r.error { return "\(r.toolName) error: \(e.localizedDescription)" }
+            return "\(r.toolName): \(r.result.map { String(describing: $0) } ?? "ok")"
+        }.joined(separator: "\n")
+        m.append(["role": "system", "content": "Tool results:\n\(summary)"])
+    }
+    m.append(["role": "user", "content": input])
+    return m
+}
+
+private func buildPrompt(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> String {
+    var s = "You are a terminal assistant. Be concise and concrete.\n"
+    if !toolResults.isEmpty {
+        s += "Tool results:\n" + toolResults.map { "\($0.toolName): \($0.result.map { String(describing: $0) } ?? "ok")" }.joined(separator: "\n") + "\n"
+    }
+    s += "User: \(input)"
+    return s
+}
+
+// MARK: - Mock
+
 struct MockProvider: AgentProvider {
-    func generateResponse(
-        input: String,
-        intent: AgentIntent,
-        toolResults: [ToolResult],
-        context: AgentContext
-    ) async -> AIResponse {
+    let config: ProviderConfig
+    init(_ config: ProviderConfig = ProviderConfig(name: "Mock", type: .mock)) { self.config = config }
+
+    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
         let responseText: String
         switch intent.type {
         case .theme_management:
@@ -339,95 +594,249 @@ struct MockProvider: AgentProvider {
         case .session_management:
             responseText = "I'll help manage your sessions and workspaces."
         }
-
-        return AIResponse(
-            text: responseText,
-            intent: intent,
-            confidence: 0.85
-        )
+        return AIResponse(text: responseText, intent: intent, confidence: 0.85)
     }
 }
 
-/// Real LLM provider backed by OpenRouter (OpenAI-compatible `/v1/chat/completions`).
-/// Reads `OPENROUTER_API_KEY` from the environment; when absent it transparently
-/// falls back to `MockProvider` so the agent never breaks. Network/parse errors
-/// also degrade to the mock text instead of throwing into the UI.
-struct CloudAgentProvider: AgentProvider {
-    /// Pick the best provider available on this machine. Extend here for Azure /
-    /// OpenCode once their deployment/env wiring is settled.
-    static func detected() -> AgentProvider {
-        if let key = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"],
-           !key.isEmpty {
-            return CloudAgentProvider()
+// MARK: - OpenAI-compatible (OpenRouter, local Ollama/LM Studio, custom TGI)
+
+struct OpenAICompatibleProvider: AgentProvider {
+    let config: ProviderConfig
+    init(_ config: ProviderConfig) { self.config = config }
+
+    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+        do {
+            let req = try Self.makeRequest(config: config,
+                                           messages: buildChatMessages(input: input, intent: intent, toolResults: toolResults, context: context),
+                                           stream: false)
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            try Self.assertOK(resp, data: data)
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let message = choices.first?["message"] as? [String: Any],
+                  let text = message["content"] as? String else { throw AgentProviderError.parseFailed }
+            return AIResponse(text: text.trimmingCharacters(in: .whitespacesAndNewlines), intent: intent, confidence: 0.95)
+        } catch {
+            throw Self.map(error)
         }
-        return MockProvider()
     }
 
-    private var apiKey: String? { ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] }
-    private var model: String {
-        ProcessInfo.processInfo.environment["MACTERM_MODEL"] ?? "openai/gpt-4o-mini"
+    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let req = try Self.makeRequest(config: config,
+                                                   messages: buildChatMessages(input: input, intent: intent, toolResults: toolResults, context: context),
+                                                   stream: true)
+                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+                    try Self.assertOK(resp, data: nil)
+                    for try await line in bytes.lines {
+                        let l = line.trimmingCharacters(in: .whitespaces)
+                        guard l.hasPrefix("data:") else { continue }
+                        let payload = l.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        if payload == "[DONE]" { break }
+                        if let json = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
+                           let choices = json["choices"] as? [[String: Any]],
+                           let delta = choices.first?["delta"] as? [String: Any],
+                           let piece = delta["content"] as? String {
+                            continuation.yield(piece)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.map(error))
+                }
+            }
+        }
     }
 
-    func generateResponse(
-        input: String,
-        intent: AgentIntent,
-        toolResults: [ToolResult],
-        context: AgentContext
-    ) async -> AIResponse {
-        guard let key = apiKey, !key.isEmpty else {
-            return await MockProvider().generateResponse(input: input, intent: intent,
-                                                        toolResults: toolResults, context: context)
-        }
-
-        var messages: [[String: String]] = []
-        messages.append(["role": "system",
-                         "content": "You are Macterm's built-in assistant for terminal, file, theme and session tasks. Be concise and concrete."])
-        if !toolResults.isEmpty {
-            let summary = toolResults.map { r -> String in
-                if let e = r.error { return "\(r.toolName) error: \(e.localizedDescription)" }
-                return "\(r.toolName): \(r.result.map { String(describing: $0) } ?? "ok")"
-            }.joined(separator: "\n")
-            messages.append(["role": "system", "content": "Tool results:\n\(summary)"])
-        }
-        messages.append(["role": "user", "content": input])
-
-        guard let url = URL(string: "https://openrouter.ai/api/v1/chat/completions") else {
-            return await MockProvider().generateResponse(input: input, intent: intent,
-                                                        toolResults: toolResults, context: context)
-        }
+    static func makeRequest(config: ProviderConfig, messages: [[String: String]], stream: Bool) throws -> URLRequest {
+        let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/chat/completions") else { throw AgentProviderError.parseFailed }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("macterm", forHTTPHeaderField: "HTTP-Referer")
-        req.timeoutInterval = 30
-        let body: [String: Any] = [
-            "model": model,
-            "messages": messages,
-            "temperature": 0.3,
-            "max_tokens": 1024
-        ]
-        do {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        } catch {
-            return await MockProvider().generateResponse(input: input, intent: intent,
-                                                        toolResults: toolResults, context: context)
+        if let key = config.apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
+        req.timeoutInterval = 60
+        var body: [String: Any] = ["model": config.effectiveModel, "messages": messages,
+                                   "temperature": config.temperature, "max_tokens": config.maxTokens]
+        if stream { body["stream"] = true }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return req
+    }
 
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any],
-               let text = message["content"] as? String {
-                return AIResponse(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                                  intent: intent, confidence: 0.95)
+    static func assertOK(_ resp: URLResponse?, data: Data?) throws {
+        guard let http = resp as? HTTPURLResponse else { return }
+        switch http.statusCode {
+        case 200...299: return
+        case 401: throw AgentProviderError.unauthorized
+        case 429: throw AgentProviderError.rateLimited
+        default:
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = json["error"] as? [String: Any],
+               let msg = err["message"] as? String {
+                throw AgentProviderError.unknown(status: http.statusCode, body: msg)
             }
-        } catch {
-            // fall through to mock
+            throw AgentProviderError.unknown(status: http.statusCode,
+                                             body: String(data: data ?? Data(), encoding: .utf8) ?? "")
         }
-        return await MockProvider().generateResponse(input: input, intent: intent,
-                                                    toolResults: toolResults, context: context)
+    }
+
+    static func map(_ error: Error) -> Error {
+        if error is AgentProviderError { return error }
+        if (error as NSError).domain == NSURLErrorDomain { return AgentProviderError.network(error) }
+        return error
+    }
+}
+
+// MARK: - HuggingFace Inference API
+
+struct HuggingFaceProvider: AgentProvider {
+    let config: ProviderConfig
+    init(_ config: ProviderConfig) { self.config = config }
+
+    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+        do {
+            let t = try await Self.generate(config: config, input: input, intent: intent, toolResults: toolResults, context: context)
+            return AIResponse(text: t, intent: intent, confidence: 0.9)
+        } catch {
+            throw Self.map(error)
+        }
+    }
+
+    static func generate(config: ProviderConfig, input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> String {
+        guard let key = config.apiKey, !key.isEmpty else { throw AgentProviderError.missingKey }
+        let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/models/\(config.effectiveModel)") else { throw AgentProviderError.parseFailed }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 60
+        let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
+        let body: [String: Any] = ["inputs": prompt,
+                                   "parameters": ["return_full_text": false,
+                                                  "max_new_tokens": config.maxTokens,
+                                                  "temperature": config.temperature]]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode == 401 { throw AgentProviderError.unauthorized }
+        if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+           let t = arr.first?["generated_text"] as? String { return t }
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let t = obj["generated_text"] as? String { return t }
+        if let s = String(data: data, encoding: .utf8), !s.isEmpty {
+            throw AgentProviderError.unknown(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: s)
+        }
+        throw AgentProviderError.parseFailed
+    }
+
+    static func map(_ error: Error) -> Error {
+        error is AgentProviderError ? error : AgentProviderError.unknown(status: 0, body: error.localizedDescription)
+    }
+}
+
+// MARK: - Apple on-device FoundationModels (macOS 26)
+
+@available(macOS 26, *)
+struct FoundationProvider: AgentProvider {
+    let config: ProviderConfig
+    init(_ config: ProviderConfig) { self.config = config }
+
+    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+        var full = ""
+        for try await piece in streamResponse(input: input, intent: intent, toolResults: toolResults, context: context) {
+            full += piece
+        }
+        return AIResponse(text: full, intent: intent, confidence: 0.95)
+    }
+
+    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    guard SystemLanguageModel.default.isAvailable else { throw AgentProviderError.unavailable }
+                    let session = LanguageModelSession()
+                    let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
+                    var full = ""
+                    for try await partial in session.streamResponse(to: prompt) {
+                        let delta = String(partial.content.dropFirst(full.count))
+                        full += delta
+                        continuation.yield(delta)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: Self.map(error))
+                }
+            }
+        }
+    }
+
+    static func map(_ error: Error) -> Error {
+        error is AgentProviderError ? error : AgentProviderError.unknown(status: 0, body: error.localizedDescription)
+    }
+}
+
+// MARK: - OMP (local CLI bridge)
+
+struct OMPAgentProvider: AgentProvider {
+    let config: ProviderConfig
+    init(_ config: ProviderConfig = ProviderConfig(name: "OMP", type: .omp)) { self.config = config }
+
+    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+        if let text = await Self.run(prompt: buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)) {
+            return AIResponse(text: text, intent: intent, confidence: 0.9)
+        }
+        return try await MockProvider(config).generateResponse(input: input, intent: intent, toolResults: toolResults, context: context)
+    }
+
+    static func run(prompt: String) async -> String? {
+        await Task.detached(priority: .userInitiated) {
+            let which = Process()
+            which.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+            which.arguments = ["omp"]
+            let wp = Pipe()
+            which.standardOutput = wp
+            try? which.run(); which.waitUntilExit()
+            guard let path = String(data: wp.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
+
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: path)
+            p.arguments = ["ask"]
+            let inPipe = Pipe()
+            let outPipe = Pipe()
+            p.standardInput = inPipe
+            p.standardOutput = outPipe
+            try? p.run()
+            if let data = prompt.data(using: .utf8) { inPipe.fileHandleForWriting.write(data) }
+            try? inPipe.fileHandleForWriting.close()
+            p.waitUntilExit()
+            let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return out?.isEmpty == false ? out : nil
+        }.value
+    }
+}
+
+// MARK: - Factory
+
+@MainActor
+enum AgentProviderFactory {
+    static func make(_ config: ProviderConfig) -> AgentProvider {
+        switch config.type {
+        case .mock:           return MockProvider(config)
+        case .openrouter, .openAICompatible: return OpenAICompatibleProvider(config)
+        case .huggingface:    return HuggingFaceProvider(config)
+        case .omp:            return OMPAgentProvider(config)
+        case .foundation:
+            if #available(macOS 26, *) { return FoundationProvider(config) }
+            return MockProvider(config)
+        }
     }
 }
 // MARK: - Protocol Definitions
@@ -783,4 +1192,188 @@ class AgentContext {
         self.intent = intent
         self.timestamp = timestamp
     }
+}
+
+// MARK: - Model Catalog (OpenRouter)
+
+/// One entry from the OpenRouter model catalog. `provider` is derived from the
+/// `id` prefix (e.g. `"anthropic/claude-3.5-sonnet"` → `"anthropic"`).
+struct CatalogModel: Identifiable, Hashable, Codable {
+    let id: String
+    let name: String
+    let provider: String
+    let description: String
+    let contextLength: Int
+    let promptPricePer1M: Double
+    let completionPricePer1M: Double
+    let modalities: Set<String>
+
+    var supportsVision: Bool { modalities.contains("image") }
+
+    var contextLabel: String {
+        contextLength >= 1000
+            ? String(format: "%.0fk", Double(contextLength) / 1000)
+            : "\(contextLength)"
+    }
+    var priceLabel: String {
+        String(format: "$%.2f / $%.2f per 1M", promptPricePer1M, completionPricePer1M)
+    }
+}
+
+/// Per-provider model catalog. OpenAI-compatible providers fetch `/v1/models`;
+/// FoundationModels exposes the on-device model; HuggingFace uses the configured
+/// static model list; others have no selectable model. Results are cached per
+/// provider id and fall back to a bundled OpenRouter snapshot offline.
+@MainActor
+final class ModelCatalog: ObservableObject {
+    static let shared = ModelCatalog()
+
+    @Published private(set) var models: [CatalogModel] = []
+    @Published private(set) var isLoading = false
+    @Published private(set) var lastError: String?
+
+    private var cache: [String: [CatalogModel]] = [:]
+    private let cacheDir: URL? = {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?.appendingPathComponent("macterm")
+    }()
+
+    /// Models for a provider (cached, or bundled fallback).
+    func models(for config: ProviderConfig) -> [CatalogModel] {
+        if let cached = cache[config.id], !cached.isEmpty { return cached }
+        return bundledModels(for: config)
+    }
+
+    func loadIfNeeded(for config: ProviderConfig) {
+        if let cached = loadCache(config) { cache[config.id] = cached }
+        Task { await refresh(for: config) }
+    }
+
+    func refresh(for config: ProviderConfig) async {
+        isLoading = true
+        defer { isLoading = false }
+        switch config.type {
+        case .openrouter, .openAICompatible:
+            await fetchOpenAICompatible(config)
+        case .foundation:
+            let list = [CatalogModel(id: "system", name: "Apple on-device Foundation Model",
+                                     provider: "apple", description: "On-device model via FoundationModels (private, no network).",
+                                     contextLength: 0, promptPricePer1M: 0, completionPricePer1M: 0, modalities: ["text"])]
+            cache[config.id] = list
+            models = list
+        case .huggingface:
+            let list = config.staticModels.map {
+                CatalogModel(id: $0, name: $0, provider: "huggingface", description: "HuggingFace model.",
+                             contextLength: 0, promptPricePer1M: 0, completionPricePer1M: 0, modalities: ["text"])
+            }
+            cache[config.id] = list
+            models = list
+        default:
+            cache[config.id] = []
+            models = []
+        }
+    }
+
+    private func fetchOpenAICompatible(_ config: ProviderConfig) async {
+        let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/models") else { return }
+        do {
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 20
+            req.setValue("macterm", forHTTPHeaderField: "HTTP-Referer")
+            if let key = config.apiKey, !key.isEmpty {
+                req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            }
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let parsed = try Self.parse(data)
+            guard !parsed.isEmpty else { return }
+            cache[config.id] = parsed
+            saveCache(parsed, config)
+            models = parsed
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    // MARK: parsing
+
+    private static func parse(_ data: Data) throws -> [CatalogModel] {
+        let resp = try JSONDecoder().decode(ORResponse.self, from: data)
+        return resp.data.compactMap { m in
+            let provider = m.id.contains("/")
+                ? String(m.id.split(separator: "/", maxSplits: 1)[0])
+                : "other"
+            let inputs = m.architecture?.input_modalities ?? []
+            let modalities: Set<String> = inputs.isEmpty
+                ? Set((m.architecture?.modality ?? "text")
+                    .components(separatedBy: "+")
+                    .flatMap { $0.components(separatedBy: "->") }
+                    .map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+                : Set(inputs.map { $0.lowercased() })
+            let prompt = (m.pricing?.prompt).flatMap(Double.init) ?? 0
+            let completion = (m.pricing?.completion).flatMap(Double.init) ?? 0
+            return CatalogModel(
+                id: m.id, name: m.name, provider: provider, description: m.description ?? "",
+                contextLength: m.context_length ?? 0,
+                promptPricePer1M: prompt * 1_000_000, completionPricePer1M: completion * 1_000_000,
+                modalities: modalities
+            )
+        }.sorted { $0.id < $1.id }
+    }
+
+    private struct ORResponse: Decodable { let data: [ORModel] }
+    private struct ORModel: Decodable {
+        let id: String
+        let name: String
+        let description: String?
+        let context_length: Int?
+        let pricing: ORPricing?
+        let architecture: ORArchitecture?
+    }
+    private struct ORPricing: Decodable { let prompt: String?; let completion: String? }
+    private struct ORArchitecture: Decodable { let modality: String?; let input_modalities: [String]? }
+
+    // MARK: cache
+
+    private func loadCache(_ config: ProviderConfig) -> [CatalogModel]? {
+        guard let url = cacheFile(config),
+              let data = try? Data(contentsOf: url),
+              let list = try? JSONDecoder().decode([CatalogModel].self, from: data),
+              !list.isEmpty else { return nil }
+        return list
+    }
+    private func saveCache(_ models: [CatalogModel], _ config: ProviderConfig) {
+        guard let url = cacheFile(config) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(models) { try? data.write(to: url) }
+    }
+    private func cacheFile(_ config: ProviderConfig) -> URL? {
+        cacheDir?.appendingPathComponent("models-\(config.id).json")
+    }
+
+    private func bundledModels(for config: ProviderConfig) -> [CatalogModel] {
+        if config.type == .huggingface {
+            return config.staticModels.map {
+                CatalogModel(id: $0, name: $0, provider: "huggingface", description: "HuggingFace model.",
+                             contextLength: 0, promptPricePer1M: 0, completionPricePer1M: 0, modalities: ["text"])
+            }
+        }
+        return bundled
+    }
+
+    /// Small offline snapshot (OpenRouter) so the picker is usable without a network.
+    private let bundled: [CatalogModel] = [
+        CatalogModel(id: "openai/gpt-4o", name: "OpenAI: GPT-4o", provider: "openai", description: "Flagship multimodal model.", contextLength: 128000, promptPricePer1M: 2.5, completionPricePer1M: 10, modalities: ["text", "image"]),
+        CatalogModel(id: "openai/gpt-4o-mini", name: "OpenAI: GPT-4o mini", provider: "openai", description: "Fast, cheap multimodal.", contextLength: 128000, promptPricePer1M: 0.15, completionPricePer1M: 0.6, modalities: ["text", "image"]),
+        CatalogModel(id: "anthropic/claude-3.5-sonnet", name: "Anthropic: Claude 3.5 Sonnet", provider: "anthropic", description: "Strong general model.", contextLength: 200000, promptPricePer1M: 3, completionPricePer1M: 15, modalities: ["text", "image"]),
+        CatalogModel(id: "anthropic/claude-3.5-haiku", name: "Anthropic: Claude 3.5 Haiku", provider: "anthropic", description: "Fast, inexpensive.", contextLength: 200000, promptPricePer1M: 0.8, completionPricePer1M: 4, modalities: ["text"]),
+        CatalogModel(id: "google/gemini-pro-1.5", name: "Google: Gemini Pro 1.5", provider: "google", description: "Long-context multimodal.", contextLength: 1_000_000, promptPricePer1M: 1.25, completionPricePer1M: 5, modalities: ["text", "image"]),
+        CatalogModel(id: "meta-llama/llama-3.1-70b-instruct", name: "Meta: Llama 3.1 70B", provider: "meta-llama", description: "Open-weights instruct model.", contextLength: 131072, promptPricePer1M: 0.35, completionPricePer1M: 0.4, modalities: ["text"]),
+        CatalogModel(id: "deepseek/deepseek-chat", name: "DeepSeek: Chat", provider: "deepseek", description: "Cost-effective reasoning.", contextLength: 64000, promptPricePer1M: 0.14, completionPricePer1M: 0.28, modalities: ["text"]),
+        CatalogModel(id: "mistralai/mistral-large", name: "Mistral: Large", provider: "mistralai", description: "Mistral flagship.", contextLength: 128000, promptPricePer1M: 2, completionPricePer1M: 6, modalities: ["text"]),
+        CatalogModel(id: "qwen/qwen-2.5-72b-instruct", name: "Qwen: 2.5 72B", provider: "qwen", description: "Alibaba instruct model.", contextLength: 131072, promptPricePer1M: 0.35, completionPricePer1M: 0.4, modalities: ["text"]),
+        CatalogModel(id: "x-ai/grok-2", name: "xAI: Grok-2", provider: "x-ai", description: "Grok-2 chat.", contextLength: 131072, promptPricePer1M: 2, completionPricePer1M: 10, modalities: ["text"]),
+        CatalogModel(id: "perplexity/sonar", name: "Perplexity: Sonar", provider: "perplexity", description: "Search-augmented chat.", contextLength: 127072, promptPricePer1M: 1, completionPricePer1M: 1, modalities: ["text"]),
+        CatalogModel(id: "openrouter/auto", name: "OpenRouter: Auto", provider: "openrouter", description: "Router picks the best model.", contextLength: 0, promptPricePer1M: 0, completionPricePer1M: 0, modalities: ["text"])
+    ]
 }

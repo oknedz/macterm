@@ -23,8 +23,8 @@ struct FolderRow: View {
                     .frame(width: 10)
                 Image(systemName: expanded ? "folder.fill" : "folder")
                     .foregroundStyle(Color(nsColor: controller.theme.hierarchyColor(level: node.depth)))
-                Text(node.name).lineLimit(1).font(.system(size: 12))
-                Spacer(minLength: 0)
+                Text(node.name).lineLimit(1).font(.system(size: controller.fontSize))
+            Spacer(minLength: 0)
             }
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
@@ -38,6 +38,24 @@ struct FolderRow: View {
                 controller.setExpanded(node.url.standardizedFileURL.path, willExpand)
                 if willExpand { node.loadChildren() }
             }
+            .highPriorityGesture(
+                TapGesture().modifiers(.command).onEnded {
+                    controller.cd(node.url.path)
+                }
+            )
+            .contextMenu {
+                Button("Copy Path") { copyToPasteboard(node.url.path) }
+                Button("Copy Relative Path") { copyToPasteboard(relativePath(node.url)) }
+                Divider()
+                Button("Delete", role: .destructive) {
+                    confirmDelete(node.url) {
+                        if $0 {
+                            try? FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
+                            NotificationCenter.default.post(name: .reloadFileTree, object: nil)
+                        }
+                    }
+                }
+            }
         .onAppear {
             // Persisted expansions restore the chevron before `loadChildren`
             // is ever called. Without this, the row draws as "open" while
@@ -45,11 +63,6 @@ struct FolderRow: View {
             // click merely collapses instead of expanding.
             if expanded, node.children == nil { node.loadChildren() }
         }
-            .highPriorityGesture(
-                TapGesture().modifiers(.command).onEnded {
-                    controller.cd(node.url.path)
-                }
-            )
             .onHover { hover = $0 }
             if expanded, let kids = node.children {
                 ForEach(kids) { child in
@@ -88,7 +101,7 @@ private struct FileRow: View {
                 .font(.system(size: 11))
                 .foregroundStyle(iconColor)
                 .frame(width: 14, alignment: .center)
-            Text(node.name).lineLimit(1).font(.system(size: 12))
+            Text(node.name).lineLimit(1).font(.system(size: controller.fontSize))
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
@@ -96,7 +109,20 @@ private struct FileRow: View {
         .background(hover ? Color.primary.opacity(0.06) : Color.clear)
         .contentShape(Rectangle())
         .onHover { hover = $0 }
-        .onTapGesture(count: 2) { controller.openFile(node.url) }
+        .onTapGesture { controller.openFile(node.url) }
+        .contextMenu {
+            Button("Copy Path") { copyToPasteboard(node.url.path) }
+            Button("Copy Relative Path") { copyToPasteboard(relativePath(node.url)) }
+            Divider()
+            Button("Delete", role: .destructive) {
+                confirmDelete(node.url) {
+                    if $0 {
+                        try? FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
+                        NotificationCenter.default.post(name: .reloadFileTree, object: nil)
+                    }
+                }
+            }
+        }
     }
 }
 /// Map a file extension to an SF Symbol glyph plus a slot into the active
@@ -124,7 +150,7 @@ func iconName(for url: URL) -> String {
     case "png", "jpg", "jpeg", "gif", "svg", "webp", "heic", "bmp": return "photo"
     case "pdf":                         return "doc.richtext"
     case "zip", "gz", "tgz", "tar", "dmg", "7z", "rar": return "archivebox"
-    case "git", "gitignore", "gitattributes", "gitmodules", "gitconfig": return "git.branch"
+    case "git", "gitignore", "gitattributes", "gitmodules", "gitconfig": return "doc"
     case "app":                         return "app"
     default:                            return "doc"
     }
@@ -159,4 +185,29 @@ func fileSlot(for url: URL) -> Int? {
     default:
         return nil
     }
+}
+
+/// Copy a string to the global pasteboard (used by the tree context menu).
+private func copyToPasteboard(_ text: String) {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    pb.setString(text, forType: .string)
+}
+
+/// Path relative to the user's home directory (e.g. `~/code/macterm`).
+private func relativePath(_ url: URL) -> String {
+    let path = url.path
+    let home = NSHomeDirectory()
+    return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+}
+
+/// Confirm a destructive delete, then move the item to Trash (reversible).
+private func confirmDelete(_ url: URL, completion: @escaping (Bool) -> Void) {
+    let alert = NSAlert()
+    alert.messageText = "Delete “\(url.lastPathComponent)”?"
+    alert.informativeText = "This moves the item to Trash. \(url.path)"
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Delete")
+    alert.addButton(withTitle: "Cancel")
+    completion(alert.runModal() == .alertFirstButtonReturn)
 }

@@ -37,7 +37,13 @@ struct SettingsRoot: View {
         .navigationSplitViewStyle(.balanced)
         // Roomy on purpose: the Keys pane lists every command grouped.
         .frame(minWidth: 940, minHeight: 640)
-        .background(VisualEffectView(material: .windowBackground, blendingMode: .withinWindow))
+        .background {
+            if controller.liquidGlass {
+                VisualEffectView(material: .windowBackground, blendingMode: .withinWindow)
+            } else {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        }
         // Tags this window so ⌘W interception skips it (native Close stays).
         .background(SettingsWindowMarker())
         // The Settings window follows the app theme too (dark/light materials + controls).
@@ -77,6 +83,10 @@ private struct GeneralPane: View {
     @EnvironmentObject private var controller: TerminalController
     var body: some View {
         Form {
+            Section {
+                Text("App-wide defaults: which shell runs in new tabs, where tabs open, and a master reset for every setting.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
             Section("Shell") {
                 TextField("Executable path", text: $controller.shellPath)
                     .textFieldStyle(.roundedBorder)
@@ -116,9 +126,23 @@ private struct AppearancePane: View {
 
     var body: some View {
         Form {
+            Section("Current Theme") {
+                HStack(spacing: 10) {
+                    Text(controller.theme.name)
+                        .font(.headline)
+                    Spacer()
+                    HStack(spacing: 3) {
+                        ForEach(0..<16, id: \.self) { slot in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color(nsColor: controller.theme.ansiSwatchColors[slot]))
+                                .aspectRatio(1, contentMode: .fit)
+                        }
+                    }
+                    .frame(width: 140)
+                }
+            }
             Section {
-                TextField("Filter \(AppTheme.all.count) themes…", text: $filter)
-                    .textFieldStyle(.roundedBorder)
+                PillSearchField(placeholder: "Search Theme", text: $filter)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 10) {
                     ForEach(filtered) { theme in
                         ThemeCard(theme: theme, selected: controller.themeName == theme.slug)
@@ -139,10 +163,29 @@ private struct AppearancePane: View {
                     Image(systemName: "circle.fill")
                 }
             }
+            Section("Liquid Glass") {
+                Toggle("Enable Liquid Glass", isOn: $controller.liquidGlass)
+                Text("Applies macOS 26 Liquid Glass across the app (vibrancy fallback on older macOS). When off, the flat theme is used.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
 
             Section("Preview") {
                 TerminalPreview()
                     .frame(height: 92)
+            }
+            Section("Theme Colors") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 84))], spacing: 8) {
+                    ForEach(0..<16, id: \.self) { slot in
+                        ColorPicker(selection: controller.themeColorBinding(slot)) {
+                            Text(verbatim: String(format: "0x%X", slot))
+                        }
+                        .labelsHidden()
+                    }
+                }
+                Button("Reset theme colors") { controller.resetThemeColors() }
+                    .controlSize(.small)
+                Text("Tap a swatch to edit that ANSI color — changes apply live across the terminal, tree and preview. Reset restores the theme's defaults.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -159,10 +202,6 @@ private struct ThemeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(Color(nsColor: theme.background))
-                    .frame(width: 14, height: 14)
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
                 Text(theme.name)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Color(nsColor: theme.foreground))
@@ -204,16 +243,24 @@ private struct TerminalPreview: View {
     var body: some View {
         let fg = Color(nsColor: controller.foregroundColor)
         return VStack(alignment: .leading, spacing: 5) {
-            tok("~ ", 12) + tok("❯ ", 11) + Text("git status").foregroundColor(fg)
-            Text("On branch ").foregroundColor(fg)
-                + tok("main", 3)
-                + Text(", working tree ").foregroundColor(fg)
-                + tok("clean", 2)
-            tok("✓ ", 10)
-                + Text("themed by ").foregroundColor(fg)
-                + tok("NvChad/base46", 4)
-                + Text(" — ").foregroundColor(fg)
-                + tok(controller.theme.name, 5)
+            HStack(spacing: 0) {
+                tok("~ ", 12)
+                tok("❯ ", 11)
+                Text("git status").foregroundColor(fg)
+            }
+            HStack(spacing: 0) {
+                Text("On branch ").foregroundColor(fg)
+                tok("main", 3)
+                Text(", working tree ").foregroundColor(fg)
+                tok("clean", 2)
+            }
+            HStack(spacing: 0) {
+                tok("✓ ", 10)
+                Text("themed by ").foregroundColor(fg)
+                tok("NvChad/base46", 4)
+                Text(" — ").foregroundColor(fg)
+                tok(controller.theme.name, 5)
+            }
         }
         .font(Font.custom(controller.fontName, size: 13))
         .lineLimit(1)
@@ -269,6 +316,11 @@ private struct TextPane: View {
 // MARK: - Terminal
 private struct TerminalPane: View {
     @EnvironmentObject private var controller: TerminalController
+    @State private var newName = ""
+    @State private var newHost = ""
+    @State private var newUser = ""
+    @State private var newPort = "22"
+    @State private var newIdentity = ""
     var body: some View {
         Form {
             Section("Scrollback") {
@@ -279,15 +331,66 @@ private struct TerminalPane: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Input") {
-                Toggle("Option key acts as Meta (ESC)", isOn: $controller.optionAsMetaKey)
-                Toggle("Allow mouse reporting", isOn: $controller.allowMouseReporting)
-                Toggle("Backspace sends Ctrl-H", isOn: $controller.backspaceSendsControlH)
+                Toggle(isOn: $controller.optionAsMetaKey) {
+                    HStack(spacing: 5) {
+                        Text("Option key acts as Meta (ESC)")
+                        InfoDot(text: "Sends ESC + key for ⌥ combos — required by emacs and other TUIs. Off treats ⌥ as a normal character.")
+                    }
+                }
+                Toggle(isOn: $controller.allowMouseReporting) {
+                    HStack(spacing: 5) {
+                        Text("Allow mouse reporting")
+                        InfoDot(text: "Lets TUIs (htop, less) capture clicks, drags and scroll instead of the terminal.")
+                    }
+                }
+                Toggle(isOn: $controller.backspaceSendsControlH) {
+                    HStack(spacing: 5) {
+                        Text("Backspace sends Ctrl-H")
+                        InfoDot(text: "Emulate the historical Backspace = ^H. Needed by some old shells and editors.")
+                    }
+                }
             }
             Section("Color mapping") {
                 Picker("ANSI 256 strategy", selection: $controller.ansi256Raw) {
                     ForEach(TerminalController.ansi256Options, id: \.raw) { Text($0.label).tag($0.raw) }
                 }
                 .pickerStyle(.segmented)
+            }
+            Section("SSH Connections") {
+                if controller.sshConnections.isEmpty {
+                    Text("No saved connections.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(controller.sshConnections) { c in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(c.name.isEmpty ? c.host : c.name).font(.headline)
+                                Text("\(c.user)@\(c.host):\(c.port)").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Connect") { controller.connectSSH(c) }
+                            Button(action: { controller.removeSSHConnection(c.id) }) {
+                                Image(systemName: "trash").foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Add connection").font(.subheadline.weight(.medium))
+                    TextField("Name (optional)", text: $newName).textFieldStyle(.roundedBorder)
+                    TextField("Host", text: $newHost).textFieldStyle(.roundedBorder)
+                    TextField("User", text: $newUser).textFieldStyle(.roundedBorder)
+                    TextField("Port", text: $newPort).textFieldStyle(.roundedBorder)
+                    TextField("Identity file (optional)", text: $newIdentity).textFieldStyle(.roundedBorder)
+                    Button("Save") {
+                        guard !newHost.isEmpty, !newUser.isEmpty,
+                              let port = Int(newPort), port > 0, port <= 65535 else { return }
+                        controller.addSSHConnection(SSHConnection(id: UUID(), name: newName, host: newHost, user: newUser, port: port, identityFile: newIdentity.isEmpty ? nil : newIdentity))
+                        newName = ""; newHost = ""; newUser = ""; newPort = "22"; newIdentity = ""
+                    }
+                    .disabled(newHost.isEmpty || newUser.isEmpty)
+                }
             }
         }
         .formStyle(.grouped)
@@ -322,16 +425,18 @@ private struct WindowPane: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("App Background") {
-                Picker("Material", selection: $controller.windowMaterialRaw) {
-                    Text("Sidebar").tag(String(NSVisualEffectView.Material.sidebar.rawValue))
-                    Text("Titlebar").tag(String(NSVisualEffectView.Material.titlebar.rawValue))
-                    Text("Window Background").tag(String(NSVisualEffectView.Material.windowBackground.rawValue))
-                    Text("Popover").tag(String(NSVisualEffectView.Material.popover.rawValue))
-                    Text("Header View").tag(String(NSVisualEffectView.Material.headerView.rawValue))
-                    Text("Content Background").tag(String(NSVisualEffectView.Material.contentBackground.rawValue))
-                    Text("Under Window").tag(String(NSVisualEffectView.Material.underWindowBackground.rawValue))
+                Picker("Glass material", selection: $controller.windowMaterialRaw) {
+                    Text("Match Sidebar").tag(String(NSVisualEffectView.Material.sidebar.rawValue))
+                    Text("Match Titlebar").tag(String(NSVisualEffectView.Material.titlebar.rawValue))
+                    Text("Solid Window").tag(String(NSVisualEffectView.Material.windowBackground.rawValue))
+                    Text("Floating (Popover)").tag(String(NSVisualEffectView.Material.popover.rawValue))
+                    Text("Header Strip").tag(String(NSVisualEffectView.Material.headerView.rawValue))
+                    Text("Content Area").tag(String(NSVisualEffectView.Material.contentBackground.rawValue))
+                    Text("Translucent (Under Window)").tag(String(NSVisualEffectView.Material.underWindowBackground.rawValue))
                 }
                 .pickerStyle(.menu)
+                Text("Tints the window behind the terminal glass. Match Sidebar blends with the file tree; Under Window is the most translucent over your wallpaper.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Slider(value: $controller.windowBackgroundOpacity, in: 0...1, step: 0.05) {
                     Text("Window background opacity")
                 } minimumValueLabel: {
@@ -339,6 +444,8 @@ private struct WindowPane: View {
                 } maximumValueLabel: {
                     Image(systemName: "circle.fill")
                 }
+                Text("Higher = more opaque window; lower = more of your desktop shows through.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -347,61 +454,357 @@ private struct WindowPane: View {
 }
 
 
-/// AI provider / model / tools surface. Reads the live provider status from the
-/// environment (OpenRouter key) and lists every tool the agentic system exposes
-/// as its "skills". Model can be overridden at launch via `MACTERM_MODEL`.
+/// AI provider / model / tools surface. Driven entirely by `ProviderRegistry`:
+/// built-in and user-added providers, each with its own key (Keychain), base URL,
+/// model and parameters. Switching providers rebuilds the live `AgentProvider`.
 private struct AIPane: View {
     @EnvironmentObject private var controller: TerminalController
-
-    private var openRouterAvailable: Bool {
-        (ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"] ?? "").isEmpty == false
-    }
-    private var model: String {
-        ProcessInfo.processInfo.environment["MACTERM_MODEL"] ?? "openai/gpt-4o-mini"
-    }
+    @ObservedObject private var registry = ProviderRegistry.shared
+    @State private var showingAdd = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                GroupBox("Provider") {
-                    HStack(spacing: 8) {
-                        Image(systemName: openRouterAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundColor(openRouterAvailable ? .green : .secondary)
-                        Text(openRouterAvailable ? "OpenRouter (live LLM)" : "Mock (no API key)")
-                        Spacer()
+                GroupBox("Providers") {
+                    VStack(spacing: 4) {
+                        ForEach(Array(registry.providers.enumerated()), id: \.element.id) { _, cfg in
+                            ProviderCard(registry: registry, config: cfg) {
+                                registry.select(cfg.id)
+                                controller.agenticSystem.reloadProvider()
+                            } onDelete: {
+                                registry.remove(cfg)
+                                controller.agenticSystem.reloadProvider()
+                            }
+                        }
+                        Button(action: { showingAdd = true }) {
+                            Label("Add provider", systemImage: "plus")
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
                     }
-                    Text("Set OPENROUTER_API_KEY in the launch environment to enable a real model. The app falls back to Mock automatically when unset.")
-                        .font(.caption).foregroundColor(.secondary)
                 }
-                GroupBox("Model") {
-                    Text(model).font(.system(.body, design: .monospaced))
-                    Text("Override with MACTERM_MODEL, e.g. anthropic/claude-3.5-sonnet or deepseek/deepseek-chat.")
-                        .font(.caption).foregroundColor(.secondary)
+
+                if let idx = registry.providers.firstIndex(where: { $0.id == registry.selectedId }) {
+                    ProviderConfigEditor(registry: registry, config: $registry.providers[idx])
                 }
+
                 GroupBox("Tools & Skills") {
                     let tools = controller.agenticSystem.availableTools
                     if tools.isEmpty {
-                        Text("No tools registered.").foregroundColor(.secondary)
+                        Text("No tools registered.").foregroundStyle(.secondary)
                     } else {
-                        ForEach(tools, id: \.name) { tool in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(tool.name).font(.headline.monospaced())
-                                Text(tool.description).font(.caption).foregroundColor(.secondary)
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 6) {
+                                ForEach(tools, id: \.name) { tool in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(tool.name)
+                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                        Text(tool.description)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.primary.opacity(0.05))
+                                    .cornerRadius(8)
+                                }
                             }
-                            Divider()
+                            .padding(4)
                         }
+                        .frame(maxHeight: 220)
                     }
                 }
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onChange(of: registry.providers) { _, _ in registry.save() }
+        .sheet(isPresented: $showingAdd) { AddProviderSheet(registry: registry) }
+    }
+}
+
+private struct ProviderCard: View {
+    @ObservedObject var registry: ProviderRegistry
+    let config: ProviderConfig
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: registry.selectedId == config.id ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(registry.selectedId == config.id ? .blue : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(config.name).font(.system(size: 13, weight: .medium))
+                Text(config.type.label).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if config.type.needsKey {
+                Image(systemName: (config.apiKey == nil) ? "key.slash" : "key.fill")
+                    .foregroundStyle((config.apiKey == nil) ? .secondary : Color.green)
+                    .help(config.apiKey == nil ? "No API key" : "API key set")
+            }
+            if !config.isBuiltIn {
+                Button(action: onDelete) { Image(systemName: "trash") }
+                    .buttonStyle(.plain).help("Delete provider")
+            }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+    }
+}
+
+private struct ProviderConfigEditor: View {
+    @ObservedObject var registry: ProviderRegistry
+    @Binding var config: ProviderConfig
+    @State private var keyInput: String = ""
+
+    var body: some View {
+        GroupBox("\(config.name) settings") {
+            VStack(alignment: .leading, spacing: 10) {
+                LabeledContent("Name") {
+                    TextField("Name", text: $config.name).textFieldStyle(.roundedBorder).frame(width: 280)
+                }
+                if config.type.needsBaseURL {
+                    LabeledContent("Base URL") {
+                        TextField("Base URL", text: $config.baseURL).textFieldStyle(.roundedBorder).frame(width: 380)
+                    }
+                }
+                if config.type.needsKey {
+                    LabeledContent("API key") {
+                        SecureField("API key", text: $keyInput)
+                            .textFieldStyle(.roundedBorder).frame(width: 380)
+                            .onChange(of: keyInput) { _, new in KeychainStore.set(new, for: config.keychainKey) }
+                    }
+                    if config.apiKey == nil {
+                        Text("No API key set — provider calls will fail.").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("API key is set.").font(.caption).foregroundStyle(Color.green)
+                    }
+                }
+                LabeledContent("Temperature") {
+                    Slider(value: $config.temperature, in: 0...2, step: 0.05).frame(width: 240)
+                    Text(String(format: "%.2f", config.temperature)).font(.system(size: 11, design: .monospaced))
+                }
+                LabeledContent("Max tokens") {
+                    Stepper("\(config.maxTokens)", value: $config.maxTokens, in: 128...32768, step: 128)
+                }
+                if config.type != .mock && config.type != .omp {
+                    ModelPicker(config: $config)
+                }
+                statusText
+            }
+            .padding(4)
+        }
+        .onAppear { keyInput = config.apiKey ?? "" }
+    }
+
+    @ViewBuilder private var statusText: some View {
+        switch config.type {
+        case .foundation:
+            Text("Apple on-device model. Requires macOS 26. Private — no network or key.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .openAICompatible:
+            Text("OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, TGI). For local models leave the key empty.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .huggingface:
+            Text("HuggingFace Inference API. Uses the configured model id.")
+                .font(.caption).foregroundStyle(.secondary)
+        default:
+            EmptyView()
+        }
+    }
+}
+
+private struct AddProviderSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var registry: ProviderRegistry
+    @State private var name = ""
+    @State private var type: ProviderType = .openAICompatible
+    @State private var baseURL = ""
+    @State private var model = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Add provider").font(.headline)
+            LabeledContent("Name") {
+                TextField("Name", text: $name).textFieldStyle(.roundedBorder).frame(width: 300)
+            }
+            Picker("Type", selection: $type) {
+                ForEach(ProviderType.allCases.filter { $0 != .mock && $0 != .omp }) { t in
+                    Text(t.label).tag(t)
+                }
+            }
+            .pickerStyle(.menu)
+            if type.needsBaseURL {
+                LabeledContent("Base URL") {
+                    TextField("Base URL", text: $baseURL).textFieldStyle(.roundedBorder).frame(width: 400)
+                }
+            }
+            if type == .huggingface {
+                LabeledContent("Model") {
+                    TextField("e.g. meta-llama/Llama-3.1-8B-Instruct", text: $model)
+                        .textFieldStyle(.roundedBorder).frame(width: 400)
+                }
+            }
+            HStack {
+                Button("Cancel", action: { dismiss() })
+                Spacer()
+                Button("Add") { add() }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 470)
+    }
+
+    private func add() {
+        let id = UUID().uuidString
+        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty {
+            switch type {
+            case .openAICompatible: base = "http://localhost:11434/v1"
+            case .huggingface: base = "https://api-inference.huggingface.co"
+            default: break
+            }
+        }
+        let m = model.trimmingCharacters(in: .whitespaces)
+        let cfg = ProviderConfig(
+            id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), type: type,
+            baseURL: base, keychainKey: type.needsKey ? "provider.\(id)" : "",
+            staticModels: type == .huggingface ? [m] : [],
+            selectedModel: type == .huggingface ? m : ""
+        )
+        registry.add(cfg)
+        registry.select(id)
+        dismiss()
+    }
+}
+
+private struct ModelPicker: View {
+    @ObservedObject private var catalog = ModelCatalog.shared
+    @Binding var config: ProviderConfig
+    @State private var search = ""
+    @State private var providerFilter: String = "All"
+    @State private var sort: SortKey = .name
+
+    private enum SortKey: String, CaseIterable, Identifiable {
+        case name, context, price
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .name: return "Name"
+            case .context: return "Context"
+            case .price: return "Price"
+            }
+        }
+    }
+
+    private var models: [CatalogModel] { catalog.models(for: config) }
+
+    private var providers: [String] { ["All"] + Set(models.map { $0.provider }).sorted() }
+
+    private var filtered: [CatalogModel] {
+        models.filter { m in
+            (providerFilter == "All" || m.provider == providerFilter) &&
+            (search.isEmpty ||
+             m.id.localizedCaseInsensitiveContains(search) ||
+             m.name.localizedCaseInsensitiveContains(search))
+        }.sorted {
+            switch sort {
+            case .name: return $0.id < $1.id
+            case .context: return $0.contextLength > $1.contextLength
+            case .price: return $0.promptPricePer1M < $1.promptPricePer1M
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search models", text: $search).textFieldStyle(.roundedBorder)
+                if catalog.isLoading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(action: { Task { await catalog.refresh(for: config) } }) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain).help("Refresh model list")
+                }
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(providers, id: \.self) { p in
+                        FilterChip(title: p, selected: providerFilter == p) { providerFilter = p }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            Picker("Sort", selection: $sort) {
+                ForEach(SortKey.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 240)
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(filtered) { model in
+                        Button(action: { config.selectedModel = model.id }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: config.selectedModel == model.id ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(config.selectedModel == model.id ? .blue : .secondary)
+                                VStack(alignment: .leading) {
+                                    HStack {
+                                        Text(model.name).font(.system(size: 12, weight: .medium))
+                                        if model.supportsVision {
+                                            Image(systemName: "eye.fill").font(.system(size: 9)).foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Text(model.contextLabel).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                                    }
+                                    Text(model.id).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(8)
+                            .background(config.selectedModel == model.id ? Color.blue.opacity(0.12) : Color.primary.opacity(0.05))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(4)
+            }
+            .frame(maxHeight: 260)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(8)
+            Text("Selected: \(config.selectedModel.isEmpty ? "(default)" : config.selectedModel).")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .task { catalog.loadIfNeeded(for: config) }
+    }
+}
+
+private struct FilterChip: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(selected ? Color.blue.opacity(0.18) : Color.primary.opacity(0.08))
+                .foregroundStyle(selected ? .blue : .primary)
+                .cornerRadius(20)
+        }
+        .buttonStyle(.plain)
     }
 }
 // MARK: - Keys
 
-/// Every app command, NvChad-grouped and filterable by name, group or nvim
-/// mapping. Each row rebinds live and can be reset to its catalog default.
+/// Every app command, NvChad-grouped and filterable by name or group.
+/// Each row rebinds live and can be reset to its catalog default.
 private struct ShortcutsPane: View {
     @EnvironmentObject private var controller: TerminalController
     @State private var search = ""
@@ -422,15 +825,12 @@ private struct ShortcutsPane: View {
         guard !q.isEmpty else { return true }
         return cmd.title.lowercased().contains(q)
             || cmd.group.lowercased().contains(q)
-            || cmd.nvim.lowercased().contains(q)
     }
 
     var body: some View {
         Form {
             Section("Search") {
-                TextField("Filter \(TerminalController.commandCatalog.count) commands — name, group or nvim mapping…",
-                          text: $search)
-                    .textFieldStyle(.roundedBorder)
+                PillSearchField(placeholder: "Search shortcuts", text: $search)
                 Text("Click a key cell, press the new combination; Esc cancels. Duplicates are flagged.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -450,7 +850,7 @@ private struct ShortcutsPane: View {
             }
             Section("Custom") {
                 if controller.customBindings.isEmpty {
-                    Text("No custom bindings yet. Add extra combos for any command — space works as the nvim leader.")
+                    Text("No custom bindings yet. Add extra combos for any command — space works as a leader key.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 ForEach(controller.customBindings) { b in
@@ -548,8 +948,8 @@ private struct ShortcutsPane: View {
     }
 }
 
-/// One command row: title + the neovim mapping it mirrors, a capture cell,
-/// duplicate warning, and a one-click reset to the catalog default.
+/// One command row: title, a capture cell, duplicate warning, and a
+/// one-click reset to the catalog default.
 private struct ShortcutRow: View {
     let spec: CommandSpec
     let conflicting: Bool
@@ -559,9 +959,6 @@ private struct ShortcutRow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(spec.title)
-                Text(spec.nvim.isEmpty ? "—" : spec.nvim)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             if conflicting {
@@ -615,7 +1012,7 @@ private struct ShortcutCaptureField: View {
         listening = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             if event.keyCode == 53 { self.stopListening(); return nil }   // Esc cancels
-            // Accept any printable character INCLUDING space (nvim <leader>);
+            // Accept any printable character INCLUDING space (leader key);
             // ignore pure-modifier presses.
             // Arrow keys arrive as private-use chars; store readable glyphs.
             if let glyph = KeyBinding.arrowGlyphByKeyCode[event.keyCode] {
@@ -662,7 +1059,7 @@ private struct ShortcutCaptureField: View {
         if m.contains(.option)  { s += "⌥" }
         if m.contains(.control) { s += "⌃" }
         switch b.key {
-        case " ": return s + "␣"                       // space / nvim leader
+        case " ": return s + "␣"                       // space / leader key
         default:
             let k = b.key
             return s + (k.count == 1 && k.first!.isLetter ? k.uppercased() : k)

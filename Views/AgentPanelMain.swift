@@ -36,6 +36,12 @@ struct AgentPanelMain: View {
     }
     
     private func processUserInput() async {
+        let raw = userInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.hasPrefix("/") {
+            handleSlashCommand(raw)
+            userInput = ""
+            return
+        }
         let context = AgentContext(
             sessionId: controller.focusedSessionId,
             workingDirectory: controller.activeCwd,
@@ -43,6 +49,34 @@ struct AgentPanelMain: View {
         )
         await agenticSystem.processUserInput(userInput, context: context)
         userInput = ""
+    }
+
+    private func handleSlashCommand(_ raw: String) {
+        let body = String(raw.dropFirst())
+        let parts = body.split(separator: " ", maxSplits: 1).map(String.init)
+        let cmd = parts.first?.lowercased() ?? ""
+        let arg = parts.count > 1 ? parts[1] : ""
+        switch cmd {
+        case "clear":
+            agenticSystem.conversationHistory.removeAll()
+        case "theme":
+            if !arg.isEmpty {
+                controller.themeName = arg
+            } else {
+                agenticSystem.conversationHistory.append(
+                    AgentMessage(role: .assistant, content: "Usage: /theme <name>", timestamp: Date()))
+            }
+        case "newtab", "tab":
+            controller.newTab()
+        case "help":
+            agenticSystem.conversationHistory.append(
+                AgentMessage(role: .assistant,
+                    content: "Commands:\n/clear — clear chat\n/theme <name> — apply theme\n/newtab — open new tab\n/help — this list",
+                    timestamp: Date()))
+        default:
+            agenticSystem.conversationHistory.append(
+                AgentMessage(role: .assistant, content: "Unknown command: \(raw). Type /help.", timestamp: Date()))
+        }
     }
 }
 
@@ -141,7 +175,7 @@ struct AvatarView: View {
                 .fill(role == .assistant ? Color.blue.opacity(0.2) : Color.green.opacity(0.2))
                 .frame(width: 32, height: 32)
             
-            Image(systemName: role == .assistant ? "brain.head.circle.fill" : "person.circle.fill")
+            Image(systemName: role == .assistant ? "brain.fill" : "person.circle.fill")
                 .font(.caption)
                 .foregroundColor(role == .assistant ? .blue : .green)
         }
@@ -150,10 +184,11 @@ struct AvatarView: View {
 
 struct MessageContentView: View {
     let message: AgentMessage
+    @EnvironmentObject private var controller: TerminalController
     
     var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
-            Text(message.content)
+                Text(message.content).font(.system(size: controller.fontSize))
                 .padding()
                 .background(
                     message.role == .user ? 
@@ -202,14 +237,26 @@ struct AgentInputArea: View {
     @Binding var userInput: String
     let isProcessing: Bool
     let action: () -> Void
+    @EnvironmentObject private var controller: TerminalController
     
     var body: some View {
         VStack(spacing: 10) {
+            if $userInput.wrappedValue.hasPrefix("/") {
+                Text("Commands: /clear  /theme <name>  /newtab  /help")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+            }
             Divider()
             
             HStack(spacing: 10) {
-                TextField("Ask about terminal, files, themes...", text: $userInput)
-                    .textFieldStyle(.roundedBorder)
+                TextEditor(text: $userInput)
+                    .font(.system(size: controller.fontSize))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 38, maxHeight: 140)
+                    .padding(6)
+                    .background(Color.primary.opacity(0.06))
+                    .cornerRadius(6)
                     .disabled(isProcessing)
                 
                 Button(action: action) {
@@ -230,29 +277,39 @@ struct AgentInputArea: View {
     }
 }
 struct ToolSelectionStrip: View {
-    let agenticSystem: AgenticSystem
+    @ObservedObject var agenticSystem: AgenticSystem
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(agenticSystem.availableTools, id: \.name) { tool in
-                    Button(action: {
-                        Task { await agenticSystem.runTool(named: tool.name) }
-                    }) {
-                        Text(tool.name)
-                            .font(.caption)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.primary.opacity(0.1))
-                            .cornerRadius(8)
+        Group {
+            if agenticSystem.availableTools.isEmpty {
+                EmptyView()
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(agenticSystem.availableTools, id: \.name) { tool in
+                            Button(action: { Task { await agenticSystem.runTool(named: tool.name) } }) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(tool.name)
+                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                        .lineLimit(1)
+                                    Text(tool.description)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                .frame(width: 132, alignment: .leading)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(Color.primary.opacity(0.08))
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                            .help(tool.description)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help(tool.description)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
                 }
+                .frame(height: 58)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
         }
-        .frame(height: agenticSystem.availableTools.isEmpty ? 0 : 38)
     }
 }

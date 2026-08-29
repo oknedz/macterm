@@ -103,7 +103,18 @@ private struct TabPill: View {
     private var active: Bool { tab.id == controller.activeTabId }
 
     var body: some View {
+        let idx = controller.tabs.firstIndex(where: { $0.id == tab.id }).map { $0 + 1 }
         HStack(spacing: 5) {
+            // Static terminal glyph so each tab reads as a terminal, plus its
+            // 1-based index (⌘1–⌘9 target it) when there are ≤ 9 tabs.
+            Image(systemName: "terminal")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            if let idx, idx <= 9 {
+                Text("\(idx)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
             if let color = tab.color {
                 Circle()
                     .fill(Color(nsColor: color))

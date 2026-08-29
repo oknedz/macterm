@@ -38,10 +38,18 @@ struct TerminalViewRepresentable: NSViewRepresentable {
         tv.processDelegate = context.coordinator
         tv.controller = controller
         tv.sessionId = sessionId
-        let shell = controller.shellPath
-        let cwd = controller.sessions.first(where: { $0.id == sessionId })?.cwd
         controller.register(sessionId, tv)
-        tv.startProcess(executable: shell, args: ["-l"], environment: nil, execName: nil, currentDirectory: cwd)
+        let session = controller.sessions.first(where: { $0.id == sessionId })
+        if let ssh = session?.ssh {
+            var args = [ssh.user + "@" + ssh.host]
+            if ssh.port != 22 { args += ["-p", "\(ssh.port)"] }
+            if let idFile = ssh.identityFile, !idFile.isEmpty { args += ["-i", idFile] }
+            tv.startProcess(executable: "/usr/bin/ssh", args: args, environment: nil, execName: nil, currentDirectory: nil)
+        } else {
+            let shell = controller.shellPath
+            let cwd = session?.cwd
+            tv.startProcess(executable: shell, args: ["-l"], environment: nil, execName: nil, currentDirectory: cwd)
+        }
         context.coordinator.applied = controller.appearanceSignature
         return tv
     }
@@ -132,8 +140,13 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     /// than assigned: SwiftTerm exposes it as a get-only property.)
     override var preservesContentDuringLiveResize: Bool { false }
     var sessionId: UUID?
-    private static let resizeDebounce: TimeInterval = 0.06
+    private static let resizeDebounce: TimeInterval = 0.1
     private var pendingSize: CGSize?
+    /// Last size actually delivered to the pty. Resizes are only forwarded
+    /// when the size genuinely changes, so a sidebar toggle / window resize
+    /// emits at most one SIGWINCH instead of one per spring-overshoot frame
+    /// (each redundant SIGWINCH makes the shell's prompt theme reprint).
+    private var lastDeliveredSize: CGSize = .zero
     /// True while AppKit is animating a live resize (drag-to-resize).
     /// SwiftTerm's draw path feeds the current screen content into the
     /// NSTextStorage on every redraw; during a drag AppKit issues many
@@ -160,6 +173,11 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     private var timer: Timer?
 
     override func setFrameSize(_ newSize: NSSize) {
+        // Ignore changes smaller than half a point — SwiftUI's spring
+        // overshoot emits several near-identical frames that would each
+        // otherwise schedule a pty resize and trigger a prompt reprint.
+        guard abs(newSize.width - lastDeliveredSize.width) > 0.5 ||
+              abs(newSize.height - lastDeliveredSize.height) > 0.5 else { return }
         pendingSize = newSize
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: Self.resizeDebounce, repeats: false) { [weak self] _ in
@@ -173,6 +191,11 @@ final class ResizableTerminalView: LocalProcessTerminalView {
     }
 
     private func applyPendingSize(_ size: CGSize) {
+        // Deliver only when the size truly changed; otherwise the pty gets a
+        // redundant SIGWINCH and the shell prompt is reprinted.
+        guard abs(size.width - lastDeliveredSize.width) > 0.5 ||
+              abs(size.height - lastDeliveredSize.height) > 0.5 else { return }
+        lastDeliveredSize = size
         super.setFrameSize(size)
     }
 
@@ -196,6 +219,12 @@ final class ResizableTerminalView: LocalProcessTerminalView {
         case "closePane":
             MainActor.assumeIsolated { controller?.closeFocusedPane() }
             return true
+        case _ where binding.id.hasPrefix("goToTab."):
+            if let n = Int(binding.id.dropFirst("goToTab.".count)) {
+                MainActor.assumeIsolated { controller?.goToTab(n) }
+                return true
+            }
+            return super.performKeyEquivalent(with: event)
         default:
             return super.performKeyEquivalent(with: event)
         }

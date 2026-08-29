@@ -123,6 +123,15 @@ struct AppTheme: Identifiable {
     private func color(_ index: Int) -> NSColor {
         NSColor(hex: base16[index]) ?? .black
     }
+    /// Returns a copy with the given base16 slots overridden by `hex` strings.
+    func applyingOverrides(_ overrides: [Int: String]) -> AppTheme {
+        var base16 = self.base16
+        for (slot, hex) in overrides where (0..<base16.count).contains(slot) {
+            base16[slot] = hex
+        }
+        return AppTheme(slug: slug, name: name, isDark: isDark,
+                        accentHex: accentHex, base16: base16)
+    }
     private func rgb8(_ hex: String) -> (UInt8, UInt8, UInt8) {
         var s = hex
         if s.hasPrefix("#") { s.removeFirst() }
