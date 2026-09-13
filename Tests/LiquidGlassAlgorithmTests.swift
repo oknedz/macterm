@@ -223,21 +223,21 @@ final class LiquidGlassAlgorithmTests: XCTestCase {
         XCTAssertEqual(LiquidGlassAlgorithm.blurKernel.count, 81)
     }
 
-    /// Tap offsets are `vec2(x, y) * 0.5`, so the 5×5 center taps are
-    /// all zero and the outer ring has ±0.5, ±1.0, ±1.5, ±2.0
-    /// components.
+    /// Raw 9×9 tap grid: `x, y ∈ -4...4`. `evaluate` scales each tap by
+    /// `0.5 / resolution`, so the effective shader offset is
+    /// `vec2(x, y) * 0.5 / ir`.
     func testBlurKernelTapOffsets() {
         let kernel = LiquidGlassAlgorithm.blurKernel
         // Center tap is (0, 0).
         XCTAssertTrue(kernel.contains(SIMD2<Double>(0, 0)))
-        // Outer ring (corners) is (±2, ±2).
-        XCTAssertTrue(kernel.contains(SIMD2<Double>(2, 2)))
-        XCTAssertTrue(kernel.contains(SIMD2<Double>(-2, -2)))
-        // No tap exceeds the shader's (±2, ±2) extent.
+        // Outer ring (corners) is (±4, ±4).
+        XCTAssertTrue(kernel.contains(SIMD2<Double>(4, 4)))
+        XCTAssertTrue(kernel.contains(SIMD2<Double>(-4, -4)))
+        // No tap exceeds the shader's raw (±4, ±4) extent.
         let maxComp = kernel.flatMap { [$0.x, $0.y] }.max() ?? 0
         let minComp = kernel.flatMap { [$0.x, $0.y] }.min() ?? 0
-        XCTAssertEqual(maxComp, 2, accuracy: 1e-12)
-        XCTAssertEqual(minComp, -2, accuracy: 1e-12)
+        XCTAssertEqual(maxComp, 4, accuracy: 1e-12)
+        XCTAssertEqual(minComp, -4, accuracy: 1e-12)
     }
 
     // MARK: - Full evaluate()
