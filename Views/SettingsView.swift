@@ -59,7 +59,7 @@ struct SettingsRoot: View {
                 .padding(.top, 14)
                 .padding(.bottom, 6)
             ForEach(sectionsFor(topSearch)) { section in
-                sidebarRow(section, proxy: proxy)
+                SidebarRow(section: section, selection: $selection, proxy: proxy)
             }
             Spacer(minLength: 0)
         }
@@ -70,32 +70,43 @@ struct SettingsRoot: View {
         )
     }
 
-    private func sidebarRow(_ section: SettingsSection, proxy: ScrollViewProxy) -> some View {
-        Button {
-            selection = section
-            withAnimation(.easeInOut(duration: 0.28)) {
-                proxy.scrollTo(section, anchor: .top)
-            }
-        } label: {
-            Label(section.title, systemImage: section.icon)
-                .font(.system(size: 13, weight: selection == section ? .semibold : .regular))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(selection == section
-                              ? Color(nsColor: controller.accentColor).opacity(0.22)
-                              : Color.clear)
-                )
-                .foregroundColor(selection == section
-                                 ? Color(nsColor: controller.accentColor)
-                                 : Color(nsColor: controller.foregroundColor).opacity(0.85))
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 10)
-    }
+    private struct SidebarRow: View {
+        let section: SettingsSection
+        let selection: Binding<SettingsSection>
+        let proxy: ScrollViewProxy
+        @EnvironmentObject private var controller: TerminalController
+        @State private var hovered = false
 
+        private var isHighlighted: Bool { selection.wrappedValue == section }
+
+        var body: some View {
+            Button {
+                selection.wrappedValue = section
+                withAnimation(.easeInOut(duration: 0.28)) {
+                    proxy.scrollTo(section, anchor: .top)
+                }
+            } label: {
+                Label(section.title, systemImage: section.icon)
+                    .font(.system(size: 13, weight: isHighlighted ? .semibold : .regular))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isHighlighted
+                                  ? Color(nsColor: controller.accentColor).opacity(0.22)
+                                  : (hovered ? Color(nsColor: controller.foregroundColor).opacity(0.08) : Color.clear))
+                    )
+                    .foregroundColor(isHighlighted
+                                     ? Color(nsColor: controller.accentColor)
+                                     : Color(nsColor: controller.foregroundColor).opacity(0.85))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 }
+        }
+    }
     // MARK: - Content (ST4: single scrollable page; ST6: top search)
 
     private func content(proxy: ScrollViewProxy) -> some View {

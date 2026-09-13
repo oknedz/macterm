@@ -30,12 +30,11 @@ struct CapsuleSearchField: NSViewRepresentable {
 
     private func style(_ field: NSSearchField) {
         field.wantsLayer = true
-        field.layer?.cornerRadius = 11          // height/2 of the ~22pt field
+        field.layer?.cornerRadius = 11
         field.layer?.borderWidth = 0.5
         field.layer?.borderColor = NSColor.systemGray.withAlphaComponent(0.4).cgColor
-        field.backgroundColor = NSColor.systemGray.withAlphaComponent(0.12)
+        field.backgroundColor = .clear
         field.textColor = .labelColor
-        // Suppress the default focus accent (orange) — neutral gray instead.
         field.appearance = NSAppearance(named: .aqua)
     }
 
@@ -44,11 +43,24 @@ struct CapsuleSearchField: NSViewRepresentable {
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         let parent: CapsuleSearchField
         init(_ p: CapsuleSearchField) { parent = p }
+
         func controlTextDidChange(_ obj: Notification) {
             if let f = obj.object as? NSSearchField { parent.text = f.stringValue }
         }
-        func control(_ control: NSControl, textView: NSTextView,
-                     doCommandBy commandSelector: Selector) -> Bool {
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            if let f = notification.object as? NSSearchField {
+                f.backgroundColor = NSColor.systemGray.withAlphaComponent(0.12)
+            }
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            if let f = notification.object as? NSSearchField {
+                f.backgroundColor = .clear
+            }
+        }
+
+        func control(_ control: NSControl, NSToolbarItem: NSToolbarItem, doCommandBy commandSelector: Selector) -> Bool {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 parent.onCommit?()
                 return true
