@@ -1,0 +1,15 @@
+{
+  "images" : [
+    { "idiom" : "mac", "scale" : "1x", "size" : "16x16", "filename" : "macterm_16.png" },
+    { "idiom" : "mac", "scale" : "1x", "size" : "32x32", "filename" : "macterm_32.png" },
+    { "idiom" : "mac", "scale" : "1x", "size" : "64x64", "filename" : "macterm_64.png" },
+    { "idiom" : "mac", "scale" : "1x", "size" : "128x128", "filename" : "macterm_128.png" },
+    { "idiom" : "mac", "scale" : "1x", "size" : "256x256", "filename" : "macterm_256.png" },
+    { "idiom" : "mac", "scale" : "1x", "size" : "512x512", "filename" : "macterm_512.png" },
+    { "idiom" : "mac", "scale" : "1x", "size" : "1024x1024", "filename" : "macterm_1024.png" }
+  ],
+  "info" : {
+    "author" : "xcodegen",
+    "version" : 1
+  }
+}
