@@ -27,6 +27,15 @@ targets:
           - macterm
           - SwiftTermVendor
           - Tests
+          # Repo metadata, not app content. Anything under `.` that XcodeGen does
+          # not recognise becomes a bundled resource, so a new top-level directory
+          # lands inside the .app unless it is excluded here.
+          - .github
+          - docs
+          - project.yml
+          - .second-brain.json
+          - .graphify_labels.json
+          - graphify-out
     info:
       path: Info.plist
     dependencies:
