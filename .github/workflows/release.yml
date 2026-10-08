@@ -5,25 +5,29 @@ on:
     tags:
       - 'v*'
 
-# Read-only by default. The write grant belongs to the one job that publishes a
-# release, not to the job that builds — zizmor flags workflow-level contents: write.
+# Read-only by default; the single job below is the only thing that writes, and
+# only to publish the release.
 permissions:
   contents: read
 
 jobs:
-  # macOS only — a macOS app produces a single DMG, so there is no matrix here.
-  # The DMG is assembled by scripts/package-release.sh, the same script used
-  # locally, so a release cannot differ from what was tested on this machine.
-  build:
-    name: Build DMG
+  # One job, not two. Splitting build from publish means passing the DMG between
+  # them as a workflow artifact, and there is no reason to: a macOS app produces
+  # one file, and the runner that built it can attach it to the release directly.
+  # Nothing is uploaded to the Actions artifacts tab — the release is the only
+  # place a build appears, and you pull it from there if you want it.
+  release:
+    name: Build and publish DMG
     runs-on: xcode-27
     timeout-minutes: 45
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # No job here pushes; leaving the token in .git/config would hand it to
-          # every later step for nothing.
+          # This job pushes a tag's release, never the repository itself, so the
+          # checkout does not need to leave a token in .git/config.
           persist-credentials: false
 
       - name: Install XcodeGen
@@ -39,34 +43,16 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      # The same script used locally, so a published release cannot differ from
+      # the build you tested on your machine.
       - name: Package release
         run: scripts/package-release.sh dist
 
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: MacTerm-Release
-          path: dist/MacTerm-Release.dmg
-          retention-days: 7
+      - name: List DMG
+        run: ls -lh dist/*.dmg
 
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: macos-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download DMG
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: MacTerm-Release
-          path: artifacts/
-
-      - name: List artifacts
-        run: find artifacts -type f -name "*.dmg" | sort
-
-      # `gh` ships with the runner and already knows how to do this, so there is no
-      # third-party action to pin, audit, or keep current.
+      # `gh` ships with the runner, so there is no third-party action to pin,
+      # audit, or keep current.
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,4 +61,4 @@ jobs:
           set -euo pipefail
           args=(--generate-notes --title "$TAG")
           if [[ "$TAG" == *-* ]]; then args+=(--prerelease); fi
-          gh release create "$TAG" artifacts/*.dmg "${args[@]}"
+          gh release create "$TAG" dist/*.dmg "${args[@]}"
