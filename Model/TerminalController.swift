@@ -171,7 +171,6 @@ final class TerminalController: ObservableObject {
     @Published var activeTabId: UUID = UUID()
     @Published var focusedSessionId: UUID = UUID()
     @Published var sidebarCollapsed: Bool = false { didSet { persist() } }
-    @Published var showAgentPanel: Bool = false { didSet { persist() } }
     /// User-assigned ⌘-number hotkeys for tabs, keyed by tab id (1–9).
     @Published var tabHotkeys: [UUID: Int] = [:] { didSet { persist() } }
 
@@ -274,8 +273,6 @@ final class TerminalController: ObservableObject {
     ]
     private var views: [UUID: LocalProcessTerminalView] = [:]
     
-    /// Shared agentic system for AI workflows
-    let agenticSystem = AgenticSystem()
     /// Liquid Glass appearance toggle (Settings → Appearance). On = macOS 26
     /// Liquid Glass (or NSVisualEffectView vibrancy on macOS 15); off = the
     /// existing theme backgrounds. Persisted; defaults to on so the current
@@ -425,7 +422,6 @@ final class TerminalController: ObservableObject {
 
         // View / UI
         CommandSpec(id: "toggleSidebar",group: "View",   title: "Toggle Sidebar", key: "s", mods: [.command, .shift]),
-        CommandSpec(id: "toggleAgentPanel", group: "View", title: "Toggle Agent Panel", key: "a", mods: [.command, .shift]),
         CommandSpec(id: "clearTerminal",group: "View",   title: "Clear Terminal", key: "k", mods: .command),
         CommandSpec(id: "fontBigger",   group: "View",   title: "Font Size Up", key: "=", mods: .command),
         CommandSpec(id: "fontSmaller",  group: "View",   title: "Font Size Down", key: "-", mods: .command),
@@ -514,8 +510,6 @@ final class TerminalController: ObservableObject {
         focusedSessionId = first.id
         installGlobalShortcuts()
         
-        // Configure agentic system with this controller for real tool implementations
-        agenticSystem.configureTools(with: self)
     }
 
     /// App-global key interception for terminal-scoped combos. Local monitors
@@ -580,7 +574,6 @@ final class TerminalController: ObservableObject {
         startupDirRaw          = d.string(forKey: "startupDirRaw") ?? startupDirRaw
         closeOnExit            = d.object(forKey: "closeOnExit") as? Bool ?? closeOnExit
         sidebarCollapsed       = d.object(forKey: "sidebarCollapsed") as? Bool ?? sidebarCollapsed
-        showAgentPanel         = d.object(forKey: "showAgentPanel") as? Bool ?? showAgentPanel
         // Persisted tab hotkeys (UUID → number), stored as [String:Int].
         if let raw = d.dictionary(forKey: "tabHotkeys") as? [String: Int] {
             var map: [UUID: Int] = [:]
@@ -647,7 +640,6 @@ final class TerminalController: ObservableObject {
         d.set(startupDirRaw, forKey: "startupDirRaw")
         d.set(closeOnExit, forKey: "closeOnExit")
         d.set(sidebarCollapsed, forKey: "sidebarCollapsed")
-        d.set(showAgentPanel, forKey: "showAgentPanel")
         d.set(sidebarWidth, forKey: "sidebarWidth")
         d.set(terminalPadding, forKey: "terminalPadding2")
         d.set(windowMaterialRaw, forKey: "windowMaterialRaw")
@@ -672,14 +664,11 @@ final class TerminalController: ObservableObject {
         for k in ["themeName","backgroundAlpha","fontName","fontSize","cursorShapeRaw","cursorBlink","themeColorOverrides",
                   "useBrightColors","scrollback","optionAsMetaKey","allowMouseReporting",
                   "backspaceSendsControlH","ansi256Raw","shellPath","startupDirRaw","closeOnExit",
-                  "sidebarCollapsed","showAgentPanel","sidebarWidth","terminalPadding2","colorOverrides","keyBindings",
                   "windowMaterialRaw","windowBackgroundOpacity","sidebarProjects","sshConnections",
                   "liquidGlass"] {
             d.removeObject(forKey: k)
         }
-        ProviderRegistry.shared.resetToBuiltIns()
         restore()
-        agenticSystem.reloadProvider()
         objectWillChange.send()
     }
 
@@ -976,7 +965,6 @@ final class TerminalController: ObservableObject {
         case "nextTab":       cycleTab(1)
         case "prevTab":       cycleTab(-1)
         case "toggleSidebar": toggleSidebar()
-        case "toggleAgentPanel": showAgentPanel.toggle()
         case "clearTerminal": clearActive()
         case "splitRight":    splitFocused(vertical: true)
         case "splitDown":     splitFocused(vertical: false)

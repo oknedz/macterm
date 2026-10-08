@@ -57,7 +57,6 @@ struct MacTermApp: App {
             
             CommandMenu("View") {
                 commandButton("toggleSidebar")
-                commandButton("toggleAgentPanel")
                 commandButton("toggleDotFiles")
                 Divider()
                 commandButton("clearTerminal")

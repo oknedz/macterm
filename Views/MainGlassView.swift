@@ -67,17 +67,7 @@ struct MainGlassView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .layoutPriority(0)
 
-                if controller.showAgentPanel {
-                    AgentPanelMain()
-                        .glassPanel(glass: controller.liquidGlass)
-                        .frame(width: 420)
-                        .frame(maxHeight: .infinity)
-                        .padding(.vertical, GlassMetrics.margin)
-                        .layoutPriority(1)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
             }
-            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: controller.showAgentPanel)
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: controller.sidebarCollapsed)
             .padding(.top, 6)
             .padding(.horizontal, GlassMetrics.margin)

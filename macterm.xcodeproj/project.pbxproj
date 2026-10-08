@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -15,7 +15,6 @@
 		224B16EF0EB4A2FE6368BE66 /* LiquidGlassAlgorithmSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C453E1EFB7BCDA30B30D22 /* LiquidGlassAlgorithmSettingsView.swift */; };
 		354B0ABC9D5D0C7F99929A7B /* LiquidGlassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34188FD5E76DC6D32CADF21 /* LiquidGlassRenderer.swift */; };
 		3882F001CC54336A4C5FDFFD /* WindowConfigurator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8167ABEE721E3CEF441F812 /* WindowConfigurator.swift */; };
-		403B1CE341CDA19225121D6E /* AgenticSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05E3B1CCFAE28FBC629FA889 /* AgenticSystem.swift */; };
 		43AB3AA27E99AC60DB44EC1D /* PillTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490E4D6D762BE43FD817EA6C /* PillTextField.swift */; };
 		47321506A7F1D36323B78538 /* GitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A442FB39FDC86A808BAD0131 /* GitService.swift */; };
 		50F4247013C5A8C3D905A24E /* MacTermApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = "TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */; };
@@ -41,13 +40,11 @@
 		E6421C532EE81CFF98475317 /* LiquidGlassGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D34FCD1ECA2FC781C0ED587 /* LiquidGlassGlassView.swift */; };
 		E64325FFA142715E5BA20554 /* TerminalController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C3DE778B7BEEA33BE9713EA /* TerminalController.swift */; };
 		E708FB87DE3036E0555497E4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = "TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */; };
-		E9D67BEB6694C14EBF82ADF2 /* AgentPanelMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8C9716E486EAD2FB07BFE62 /* AgentPanelMain.swift */; };
 		EA687FD4B529CD80FA343151 /* SearchBarModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1546F1916FEBA4A8B6C3240 /* SearchBarModifier.swift */; };
 		EF5C48D33C6EBC774E044EFC /* FileTreeRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F31A2D77FFEACDB431F893D /* FileTreeRow.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		05E3B1CCFAE28FBC629FA889 /* AgenticSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgenticSystem.swift; sourceTree = "<group>"; };
 		08C453E1EFB7BCDA30B30D22 /* LiquidGlassAlgorithmSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassAlgorithmSettingsView.swift; sourceTree = "<group>"; };
 		20A8CB417E7DC2F2BEB8C821 /* TerminalArea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalArea.swift; sourceTree = "<group>"; };
 		21359CA02193E8F1E2123F6B /* TerminalViewRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewRepresentable.swift; sourceTree = "<group>"; };
@@ -70,7 +67,6 @@
 		8F31A2D77FFEACDB431F893D /* FileTreeRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTreeRow.swift; sourceTree = "<group>"; };
 		9CD9C542C74C73319A3E6326 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A442FB39FDC86A808BAD0131 /* GitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitService.swift; sourceTree = "<group>"; };
-		A8C9716E486EAD2FB07BFE62 /* AgentPanelMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanelMain.swift; sourceTree = "<group>"; };
 		AA3119FC826F4F596E9799AD /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		B1546F1916FEBA4A8B6C3240 /* SearchBarModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarModifier.swift; sourceTree = "<group>"; };
 		B2300DD60BB02906418A4DBD /* macterm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = macterm.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -78,12 +74,10 @@
 		BC6D92F2CB0BAD6C2C4B77AF /* LiquidGlassRasterizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassRasterizerTests.swift; sourceTree = "<group>"; };
 		D04240842DCB6D9689BFCC9D /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		E0AB1C9A9A3F8D972CDD2A9A /* TitleBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleBar.swift; sourceTree = "<group>"; };
-		EAD9FF8C2B3C5E86A6B7E942 /* SwiftTermVendor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTermVendor; path = SwiftTermVendor; sourceTree = SOURCE_ROOT; };
+		EAD9FF8C2B3C5E86A6B7E942 /* SwiftTermVendor */ = {isa = PBXFileReference; lastKnownFileType = folder; path = SwiftTermVendor; sourceTree = SOURCE_ROOT; };
 		F34188FD5E76DC6D32CADF21 /* LiquidGlassRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassRenderer.swift; sourceTree = "<group>"; };
-		"TEMP_0FB297EA-14E5-4FDD-AB91-DF11D582659B" /* .gitignore */ = {isa = PBXFileReference; path = .gitignore; sourceTree = "<group>"; };
 		"TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacTermApp.swift; sourceTree = "<group>"; };
 		"TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		"TEMP_F6DB4542-29D8-4BF8-90A7-88E557EB4C47" /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +101,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0DD136A530778DE500EB186F /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */,
+				"TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
 		118C629EA0F77CFD0B49296E /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -140,14 +143,6 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		6ADA243C584AD91BF33F9FFF /* Models */ = {
-			isa = PBXGroup;
-			children = (
-				05E3B1CCFAE28FBC629FA889 /* AgenticSystem.swift */,
-			);
-			path = Models;
-			sourceTree = "<group>";
-		};
 		783D2223B3E4D565AEFA37CF /* Model */ = {
 			isa = PBXGroup;
 			children = (
@@ -173,18 +168,9 @@
 			path = Glass;
 			sourceTree = "<group>";
 		};
-		C2A90098AF9186089E32DCF6 /* Agentic */ = {
-			isa = PBXGroup;
-			children = (
-				6ADA243C584AD91BF33F9FFF /* Models */,
-			);
-			path = Agentic;
-			sourceTree = "<group>";
-		};
 		D8956E426AE375C3BFF9C7D0 = {
 			isa = PBXGroup;
 			children = (
-				C2A90098AF9186089E32DCF6 /* Agentic */,
 				B0503956924524E4A5062197 /* Glass */,
 				783D2223B3E4D565AEFA37CF /* Model */,
 				1902686A4EEA2F743860ADE0 /* Packages */,
@@ -193,6 +179,7 @@
 				F253569E4014701A5C4DEAA8 /* Views */,
 				6029B2EAA4EC8B0FF9FC2518 /* Frameworks */,
 				118C629EA0F77CFD0B49296E /* Products */,
+				0DD136A530778DE500EB186F /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -211,7 +198,6 @@
 		F253569E4014701A5C4DEAA8 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				A8C9716E486EAD2FB07BFE62 /* AgentPanelMain.swift */,
 				7BD0593A139FCD863B204F0E /* EditorView.swift */,
 				8F31A2D77FFEACDB431F893D /* FileTreeRow.swift */,
 				08C453E1EFB7BCDA30B30D22 /* LiquidGlassAlgorithmSettingsView.swift */,
@@ -224,22 +210,6 @@
 				E0AB1C9A9A3F8D972CDD2A9A /* TitleBar.swift */,
 			);
 			path = Views;
-			sourceTree = "<group>";
-		};
-		"TEMP_567BF4B0-E5B3-4949-BCEC-372A54E8A3B0" /* macterm */ = {
-			isa = PBXGroup;
-			children = (
-				"TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */,
-				"TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */,
-				"TEMP_0FB297EA-14E5-4FDD-AB91-DF11D582659B" /* .gitignore */,
-				"TEMP_F6DB4542-29D8-4BF8-90A7-88E557EB4C47" /* Info.plist */,
-				5763E74FA2F04AECC7EDE098 /* Term */,
-				C2A90098AF9186089E32DCF6 /* Agentic */,
-				B0503956924524E4A5062197 /* Glass */,
-				783D2223B3E4D565AEFA37CF /* Model */,
-				F253569E4014701A5C4DEAA8 /* Views */,
-			);
-			path = macterm;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -316,7 +286,6 @@
 				8C25F8CEE3ACE1D7050195C6 /* XCRemoteSwiftPackageReference "Highlightr" */,
 				F2329B9224D8BAD33626C9CB /* XCLocalSwiftPackageReference "SwiftTermVendor" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -342,8 +311,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E9D67BEB6694C14EBF82ADF2 /* AgentPanelMain.swift in Sources */,
-				403B1CE341CDA19225121D6E /* AgenticSystem.swift in Sources */,
 				D8E29A76D5FF451B89A6B664 /* AppTheme.swift in Sources */,
 				CD3E52E53262F795B948DB29 /* EditorView.swift in Sources */,
 				6798B0796A032257BB49738B /* FileNode.swift in Sources */,

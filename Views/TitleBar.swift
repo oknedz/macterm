@@ -35,10 +35,6 @@ struct TitleBar: View {
 
                 Spacer(minLength: 0)
 
-                // Agent panel toggle - right side next to settings
-                IconButton(systemName: controller.showAgentPanel ? "sparkles.rectangle.stack.fill" : "sparkles.rectangle.stack", action: { controller.perform("toggleAgentPanel") }, foregroundColor: controller.showAgentPanel ? Color(nsColor: controller.accentColor) : Color(nsColor: controller.foregroundColor))
-                    .frame(width: 28, height: 28)
-
                 // Settings gear, top-right, inline with the tabs.
                 SettingsLink {
                     SettingsGear()

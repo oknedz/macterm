@@ -18,7 +18,6 @@ struct SettingsRoot: View {
         .textTerminal: ["font", "cursor", "blink", "bold", "bright", "scrollback", "scroll", "mouse", "meta", "option", "backspace", "ansi", "ssh", "padding", "terminal", "text", "size", "connection"],
         .keys:         ["key", "shortcut", "binding", "command", "hotkey", "rebinding"],
         .window:       ["window", "sidebar", "layout", "glass", "material", "background", "opacity", "width", "chrome"],
-        .ai:           ["ai", "provider", "model", "openrouter", "openai", "huggingface", "foundation", "agent", "llm", "anthropic", "tool", "skill"],
     ]
 
     var body: some View {
@@ -159,7 +158,6 @@ struct SettingsRoot: View {
             case .textTerminal: TextTerminalSection(query: topSearch)
             case .keys:         KeysSection(query: topSearch)
             case .window:       WindowSection(query: topSearch)
-            case .ai:           AIPane()
             }
         }
         .id(section)
@@ -167,7 +165,7 @@ struct SettingsRoot: View {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, theme, textTerminal, keys, window, ai
+    case general, theme, textTerminal, keys, window
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -176,7 +174,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .textTerminal: "Text & Terminal"
         case .keys:         "Keys"
         case .window:       "Window & Layout"
-        case .ai:           "AI"
         }
     }
     var icon: String {
@@ -186,9 +183,13 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .textTerminal: "textformat"
         case .keys:         "keyboard"
         case .window:       "macwindow"
-        case .ai:           "brain"
         }
     }
+}
+
+private func sectionTitle(_ title: String) -> some View {
+    Text(title)
+        .font(.title2.weight(.semibold))
 }
 
 // MARK: - General
@@ -851,324 +852,5 @@ private struct WindowSection: View {
     }
 }
 
-// MARK: - AI (ST13)
 
-/// AI provider / model / tools surface. Driven entirely by `ProviderRegistry`:
-/// built-in and user-added providers, each with its own key (Keychain), base URL,
-/// model and parameters. Switching providers rebuilds the live `AgentProvider`.
-private struct AIPane: View {
-    @EnvironmentObject private var controller: TerminalController
-    @ObservedObject private var registry = ProviderRegistry.shared
-    @State private var showingAdd = false
 
-    private var selectionBinding: Binding<String> {
-        Binding(get: { registry.selectedId },
-                set: { registry.select($0); controller.agenticSystem.reloadProvider() })
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionTitle("AI")
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    GroupBox("Providers") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Picker("Active provider", selection: selectionBinding) {
-                                ForEach(registry.providers) { cfg in
-                                    Text(cfg.name).tag(cfg.id)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .frame(width: 340)
-                            Button(action: { showingAdd = true }) {
-                                Label("Add provider", systemImage: "plus")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .help("Add a new AI provider")
-                        }
-                    }
-
-                    if let idx = registry.providers.firstIndex(where: { $0.id == registry.selectedId }) {
-                        ProviderConfigEditor(registry: registry, config: $registry.providers[idx])
-                    }
-
-                    GroupBox("All providers") {
-                        VStack(spacing: 4) {
-                            ForEach(registry.providers) { cfg in
-                                ProviderCard(registry: registry, config: cfg) {
-                                    registry.remove(cfg)
-                                    controller.agenticSystem.reloadProvider()
-                                }
-                            }
-                        }
-                    }
-
-                    GroupBox("Tools & Skills") {
-                        let tools = controller.agenticSystem.availableTools
-                        if tools.isEmpty {
-                            Text("No tools registered.").foregroundStyle(.secondary)
-                        } else {
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 6) {
-                                    ForEach(tools, id: \.name) { tool in
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(tool.name)
-                                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                            Text(tool.description)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                        }
-                                        .padding(8)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color.primary.opacity(0.05))
-                                        .cornerRadius(8)
-                                    }
-                                }
-                                .padding(4)
-                            }
-                            .frame(maxHeight: 220)
-                        }
-                    }
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .onChange(of: registry.providers) { _, _ in registry.save() }
-            .sheet(isPresented: $showingAdd) { AddProviderSheet(registry: registry) }
-        }
-    }
-}
-
-private struct ProviderCard: View {
-    @ObservedObject var registry: ProviderRegistry
-    let config: ProviderConfig
-    let onDelete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: registry.selectedId == config.id ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(registry.selectedId == config.id ? .blue : .secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(config.name).font(.system(size: 13, weight: .medium))
-                Text(config.type.label).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            if config.type.needsKey {
-                Image(systemName: (config.apiKey == nil) ? "key.slash" : "key.fill")
-                    .foregroundStyle((config.apiKey == nil) ? .secondary : Color.green)
-                    .help(config.apiKey == nil ? "No API key" : "API key set")
-            }
-            if !config.isBuiltIn {
-                Button(action: onDelete) { Image(systemName: "trash") }
-                    .buttonStyle(.plain).help("Delete provider")
-            }
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-    }
-}
-
-private struct ProviderConfigEditor: View {
-    @ObservedObject var registry: ProviderRegistry
-    @Binding var config: ProviderConfig
-    @State private var keyInput: String = ""
-
-    var body: some View {
-        GroupBox("\(config.name) settings") {
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent("Name") {
-                    TextField("Name", text: $config.name).textFieldStyle(.roundedBorder).frame(width: 280)
-                }
-                if config.type.needsBaseURL {
-                    LabeledContent("Base URL") {
-                        TextField("Base URL", text: $config.baseURL).textFieldStyle(.roundedBorder).frame(width: 380)
-                    }
-                }
-                if config.type.needsKey {
-                    LabeledContent("API key") {
-                        SecureField("API key", text: $keyInput)
-                            .textFieldStyle(.roundedBorder).frame(width: 380)
-                            .onChange(of: keyInput) { _, new in KeychainStore.set(new, for: config.keychainKey) }
-                    }
-                    if config.apiKey == nil {
-                        Text("No API key set — provider calls will fail.").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("API key is set.").font(.caption).foregroundStyle(Color.green)
-                    }
-                }
-                LabeledContent("Temperature") {
-                    Slider(value: $config.temperature, in: 0...2, step: 0.05).frame(width: 240)
-                    Text(String(format: "%.2f", config.temperature)).font(.system(size: 11, design: .monospaced))
-                }
-                // No separate OpenRouter panel — model selection is consolidated here.
-                if config.type != .mock && config.type != .omp && config.type != .foundation {
-                    ModelPicker(config: $config)
-                }
-                statusText
-            }
-            .padding(4)
-        }
-        .onAppear { keyInput = config.apiKey ?? "" }
-    }
-
-    @ViewBuilder private var statusText: some View {
-        switch config.type {
-        case .foundation:
-            Text("Apple on-device model. Requires macOS 26. Private — no network or key.")
-                .font(.caption).foregroundStyle(.secondary)
-        case .openAICompatible:
-            Text("OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, TGI). For local models leave the key empty.")
-                .font(.caption).foregroundStyle(.secondary)
-        case .huggingface:
-            Text("HuggingFace Inference API. Uses the configured model id.")
-                .font(.caption).foregroundStyle(.secondary)
-        default:
-            EmptyView()
-        }
-    }
-}
-
-private struct AddProviderSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var registry: ProviderRegistry
-    @State private var name = ""
-    @State private var type: ProviderType = .openAICompatible
-    @State private var baseURL = ""
-    @State private var model = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Add provider").font(.headline)
-            LabeledContent("Name") {
-                TextField("Name", text: $name).textFieldStyle(.roundedBorder).frame(width: 300)
-            }
-            Picker("Type", selection: $type) {
-                // ST13: keep Mock, Apple on-device (foundation) and OMP out of the picker.
-                ForEach(ProviderType.allCases.filter { $0 != .mock && $0 != .foundation && $0 != .omp }) { t in
-                    Text(t.label).tag(t)
-                }
-            }
-            .pickerStyle(.menu)
-            if type.needsBaseURL {
-                LabeledContent("Base URL") {
-                    TextField("Base URL", text: $baseURL).textFieldStyle(.roundedBorder).frame(width: 400)
-                }
-            }
-            if type == .huggingface {
-                LabeledContent("Model") {
-                    TextField("e.g. meta-llama/Llama-3.1-8B-Instruct", text: $model)
-                        .textFieldStyle(.roundedBorder).frame(width: 400)
-                }
-            }
-            HStack {
-                Button("Cancel", action: { dismiss() })
-                Spacer()
-                Button("Add") { add() }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-        }
-        .padding()
-        .frame(width: 470)
-    }
-
-    private func add() {
-        let id = UUID().uuidString
-        var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if base.isEmpty {
-            switch type {
-            case .openAICompatible: base = "http://localhost:11434/v1"
-            case .huggingface: base = "https://api-inference.huggingface.co"
-            default: break
-            }
-        }
-        let m = model.trimmingCharacters(in: .whitespaces)
-        let cfg = ProviderConfig(
-            id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), type: type,
-            baseURL: base, keychainKey: type.needsKey ? "provider.\(id)" : "",
-            staticModels: type == .huggingface ? [m] : [],
-            selectedModel: type == .huggingface ? m : ""
-        )
-        registry.add(cfg)
-        registry.select(id)
-        dismiss()
-    }
-}
-
-private struct ModelPicker: View {
-    @ObservedObject private var catalog = ModelCatalog.shared
-    @Binding var config: ProviderConfig
-    @State private var search = ""
-    @State private var freeOnly = false
-
-    private var models: [CatalogModel] { catalog.models(for: config) }
-
-    private var filtered: [CatalogModel] {
-        models.filter { m in
-            (search.isEmpty ||
-             m.name.localizedCaseInsensitiveContains(search) ||
-             m.id.localizedCaseInsensitiveContains(search)) &&
-            (!freeOnly || (m.promptPricePer1M == 0 && m.completionPricePer1M == 0))
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search models", text: $search).textFieldStyle(.roundedBorder)
-                Toggle("Free only", isOn: $freeOnly)
-                    .help("Show only models with no per-token price")
-            }
-            if catalog.isLoading {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading models…").font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                Button(action: { Task { await catalog.refresh(for: config) } }) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.plain).help("Refresh model list")
-            }
-            List(selection: $config.selectedModel) {
-                ForEach(filtered) { model in
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(model.name).font(.system(size: 12, weight: .medium))
-                                if model.supportsVision {
-                                    Image(systemName: "eye.fill").font(.system(size: 9)).foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                                if model.promptPricePer1M == 0 && model.completionPricePer1M == 0 {
-                                    Text("Free").font(.caption).foregroundStyle(.green)
-                                } else {
-                                    Text(model.priceLabel).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                                }
-                            }
-                            Text(model.id).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(8)
-                    .tag(model.id)
-                }
-            }
-            .frame(maxHeight: 260)
-            .listStyle(.inset)
-            .background(Color.primary.opacity(0.03))
-            .cornerRadius(8)
-            Text("Selected: \(config.selectedModel.isEmpty ? "(default)" : config.selectedModel).")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        .task { catalog.loadIfNeeded(for: config) }
-    }
-}
-
-// MARK: - Shared helpers
-
-private func sectionTitle(_ title: String) -> some View {
-    Text(title)
-        .font(.title2.weight(.semibold))
-}
