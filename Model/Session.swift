@@ -28,4 +28,14 @@ struct Session: Identifiable {
     var kind: SessionKind = .terminal
     /// When set, the terminal launches `ssh` (not the local shell) for this session.
     var ssh: SSHLaunch? = nil
+
+    /// Human-readable tab title: explicit title, else cwd basename, else kind.
+    var displayTitle: String {
+        if !title.isEmpty { return title }
+        if let cwd, let last = cwd.split(separator: "/").last { return String(last) }
+        switch kind {
+        case .terminal: return "Terminal"
+        case .editor(let url): return "Editor: \(url.lastPathComponent)"
+        }
+    }
 }

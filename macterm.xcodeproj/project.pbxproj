@@ -18,6 +18,7 @@
 		403B1CE341CDA19225121D6E /* AgenticSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05E3B1CCFAE28FBC629FA889 /* AgenticSystem.swift */; };
 		43AB3AA27E99AC60DB44EC1D /* PillTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490E4D6D762BE43FD817EA6C /* PillTextField.swift */; };
 		47321506A7F1D36323B78538 /* GitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A442FB39FDC86A808BAD0131 /* GitService.swift */; };
+		50F4247013C5A8C3D905A24E /* MacTermApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = "TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */; };
 		5284BC175A3FE19FB17C863E /* LiquidGlassAlgorithm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 457CFCF3474A30101A0F5A3D /* LiquidGlassAlgorithm.swift */; };
 		59EB40B0B970F30FC8BF7DF1 /* LiquidGlassRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2300046509D093032EA06A6B /* LiquidGlassRendererTests.swift */; };
 		64F96CE08D1E0D7FC1D68078 /* LiquidGlassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F34188FD5E76DC6D32CADF21 /* LiquidGlassRenderer.swift */; };
@@ -33,17 +34,16 @@
 		C5ED995580F853415E4C9B8E /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A3879147056C3DB2BB608B54 /* SwiftTerm */; };
 		CD3E52E53262F795B948DB29 /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD0593A139FCD863B204F0E /* EditorView.swift */; };
 		CF231F72FEE5D4709A50EE24 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D04240842DCB6D9689BFCC9D /* XCTest.framework */; };
-		D8214DBAD79C789B8070C40B /* MacTermApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = "TEMP_DCB90F2B-FE86-4B95-B9BF-8AD7E37D72D4" /* MacTermApp.swift */; };
 		D8351136360ECB09B18B7338 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AA91F4A88AFA292E3616989 /* SettingsView.swift */; };
 		D8E29A76D5FF451B89A6B664 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3119FC826F4F596E9799AD /* AppTheme.swift */; };
 		DB10F4BFA21A1D4EEE294FE4 /* LiquidGlassRasterizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC6D92F2CB0BAD6C2C4B77AF /* LiquidGlassRasterizerTests.swift */; };
 		E533A0FCCE0E769E6ABC703E /* TitleBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0AB1C9A9A3F8D972CDD2A9A /* TitleBar.swift */; };
 		E6421C532EE81CFF98475317 /* LiquidGlassGlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D34FCD1ECA2FC781C0ED587 /* LiquidGlassGlassView.swift */; };
 		E64325FFA142715E5BA20554 /* TerminalController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C3DE778B7BEEA33BE9713EA /* TerminalController.swift */; };
+		E708FB87DE3036E0555497E4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = "TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */; };
 		E9D67BEB6694C14EBF82ADF2 /* AgentPanelMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8C9716E486EAD2FB07BFE62 /* AgentPanelMain.swift */; };
 		EA687FD4B529CD80FA343151 /* SearchBarModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1546F1916FEBA4A8B6C3240 /* SearchBarModifier.swift */; };
 		EF5C48D33C6EBC774E044EFC /* FileTreeRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F31A2D77FFEACDB431F893D /* FileTreeRow.swift */; };
-		F6735D4744716B3DEE642809 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = "TEMP_FEF7F405-3A1F-4A1A-A8E8-0E95B473DDE1" /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -80,10 +80,10 @@
 		E0AB1C9A9A3F8D972CDD2A9A /* TitleBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleBar.swift; sourceTree = "<group>"; };
 		EAD9FF8C2B3C5E86A6B7E942 /* SwiftTermVendor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SwiftTermVendor; path = SwiftTermVendor; sourceTree = SOURCE_ROOT; };
 		F34188FD5E76DC6D32CADF21 /* LiquidGlassRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassRenderer.swift; sourceTree = "<group>"; };
-		"TEMP_388B44F3-351C-42CF-86A6-A662BF5E85E8" /* .gitignore */ = {isa = PBXFileReference; path = .gitignore; sourceTree = "<group>"; };
-		"TEMP_DCB90F2B-FE86-4B95-B9BF-8AD7E37D72D4" /* MacTermApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacTermApp.swift; sourceTree = "<group>"; };
-		"TEMP_F12075A1-374F-4715-B3CC-6A2A03B453C9" /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		"TEMP_FEF7F405-3A1F-4A1A-A8E8-0E95B473DDE1" /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		"TEMP_0FB297EA-14E5-4FDD-AB91-DF11D582659B" /* .gitignore */ = {isa = PBXFileReference; path = .gitignore; sourceTree = "<group>"; };
+		"TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacTermApp.swift; sourceTree = "<group>"; };
+		"TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		"TEMP_F6DB4542-29D8-4BF8-90A7-88E557EB4C47" /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -226,13 +226,13 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		"TEMP_0DD5FFF4-4068-4023-A733-BCD242877415" /* macterm */ = {
+		"TEMP_567BF4B0-E5B3-4949-BCEC-372A54E8A3B0" /* macterm */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_FEF7F405-3A1F-4A1A-A8E8-0E95B473DDE1" /* Assets.xcassets */,
-				"TEMP_DCB90F2B-FE86-4B95-B9BF-8AD7E37D72D4" /* MacTermApp.swift */,
-				"TEMP_388B44F3-351C-42CF-86A6-A662BF5E85E8" /* .gitignore */,
-				"TEMP_F12075A1-374F-4715-B3CC-6A2A03B453C9" /* Info.plist */,
+				"TEMP_6D8E3769-67A9-4FCC-B7A8-DB090ADE4E58" /* Assets.xcassets */,
+				"TEMP_55070B79-57DE-42C2-9E92-06741DBCEB9C" /* MacTermApp.swift */,
+				"TEMP_0FB297EA-14E5-4FDD-AB91-DF11D582659B" /* .gitignore */,
+				"TEMP_F6DB4542-29D8-4BF8-90A7-88E557EB4C47" /* Info.plist */,
 				5763E74FA2F04AECC7EDE098 /* Term */,
 				C2A90098AF9186089E32DCF6 /* Agentic */,
 				B0503956924524E4A5062197 /* Glass */,
@@ -331,7 +331,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F6735D4744716B3DEE642809 /* Assets.xcassets in Resources */,
+				E708FB87DE3036E0555497E4 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -353,7 +353,7 @@
 				224B16EF0EB4A2FE6368BE66 /* LiquidGlassAlgorithmSettingsView.swift in Sources */,
 				179C4405CE9D15599A383DFC /* LiquidGlassGlassView.swift in Sources */,
 				354B0ABC9D5D0C7F99929A7B /* LiquidGlassRenderer.swift in Sources */,
-				D8214DBAD79C789B8070C40B /* MacTermApp.swift in Sources */,
+				50F4247013C5A8C3D905A24E /* MacTermApp.swift in Sources */,
 				1BCA507B8723BA5BD5B06E3A /* MainGlassView.swift in Sources */,
 				C586DDAE8B63C1C5066799A4 /* NvChadThemes.swift in Sources */,
 				43AB3AA27E99AC60DB44EC1D /* PillTextField.swift in Sources */,

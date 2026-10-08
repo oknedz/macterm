@@ -57,6 +57,8 @@ class AgenticSystem: ObservableObject {
     }
     
     // MARK: - Public API
+    
+    /// Process user input with multi-step agentic loop (planning + tool execution)
     func processUserInput(_ input: String, context: AgentContext) async {
         workflowState = .analyzing
         if conversationHistory.count > 200 {
@@ -66,55 +68,204 @@ class AgenticSystem: ObservableObject {
         let userMessage = AgentMessage(role: .user, content: input, timestamp: Date(), toolCalls: [])
         conversationHistory.append(userMessage)
 
-        let intent = analyzeIntent(from: input)
-        let relevantTools = extensionSystem.getTools().filter { $0.supportsIntent(intent) }
-        var toolResults: [ToolResult] = []
-        if !relevantTools.isEmpty {
-            toolResults = await executeTools(relevantTools, input: input, context: context)
-        }
+        await runAgentLoop(context: context)
 
-        // Stream the assistant reply live into the conversation.
+        workflowState = .completing
+        workflowState = .idle
+    }
+    
+    /// Main agentic loop: plan -> act -> observe -> repeat
+    private func runAgentLoop(context: AgentContext) async {
+        let allTools = extensionSystem.getTools()
+        let maxIterations = 10
+        var iteration = 0
+        
+        // Create initial assistant message placeholder
         let assistant = AgentMessage(
             role: .assistant,
             content: "",
             timestamp: Date(),
-            toolCalls: toolResults.map {
-                ToolCall(id: UUID().uuidString, name: $0.toolName, parameters: [:],
-                         result: $0.error?.localizedDescription ?? ($0.result.map { String(describing: $0) }))
-            }
+            toolCalls: []
         )
         conversationHistory.append(assistant)
         let assistantId = assistant.id
-
-        workflowState = .executing
-        do {
-            for try await piece in provider.streamResponse(
-                input: input, intent: intent, toolResults: toolResults, context: context
-            ) {
+        
+        workflowState = .planning
+        
+        while iteration < maxIterations {
+            iteration += 1
+            
+            // Build messages from conversation history
+            let messages = buildMessages(history: conversationHistory, tools: allTools, context: context)
+            
+            do {
+                workflowState = .executing
+                
+                // Get response from provider (with function calling)
+                var fullResponse = ""
+                var toolCalls: [LLMToolCall] = []
+                
+                for try await piece in provider.streamResponse(messages: messages, tools: allTools, context: context) {
+                    // Check for tool calls marker from streaming
+                    if piece.hasPrefix("__TOOL_CALLS__:") {
+                        let jsonStr = piece.dropFirst("__TOOL_CALLS__:".count)
+                        if let data = jsonStr.data(using: .utf8),
+                           let calls = try? JSONDecoder().decode([LLMToolCall].self, from: data) {
+                            toolCalls = calls
+                        }
+                        continue
+                    }
+                    
+                    // Regular content piece
+                    fullResponse += piece
+                    
+                    // Update conversation history with streaming content
+                    if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
+                        let cur = conversationHistory[i]
+                        conversationHistory[i] = AgentMessage(
+                            id: assistantId,
+                            role: .assistant,
+                            content: cur.content + piece,
+                            timestamp: cur.timestamp,
+                            toolCalls: cur.toolCalls
+                        )
+                    }
+                }
+                
+                // If no tool calls in stream, check the final response for tool calls (non-streaming fallback)
+                if toolCalls.isEmpty && fullResponse.hasPrefix("[") && fullResponse.contains("\"name\"") {
+                    // Try to parse as tool calls array
+                    if let data = fullResponse.data(using: .utf8),
+                       let calls = try? JSONDecoder().decode([LLMToolCall].self, from: data) {
+                        toolCalls = calls
+                        fullResponse = ""
+                    }
+                }
+                
+                // If we have tool calls, execute them
+                if !toolCalls.isEmpty {
+                    workflowState = .executing
+                    
+                    // Update assistant message with tool calls
+                    let toolCallRecords = toolCalls.map { tc in
+                        ToolCall(id: tc.id, name: tc.name, parameters: parseToolArguments(tc.arguments), result: nil)
+                    }
+                    if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
+                        let cur = conversationHistory[i]
+                        conversationHistory[i] = AgentMessage(
+                            id: assistantId,
+                            role: .assistant,
+                            content: cur.content,
+                            timestamp: cur.timestamp,
+                            toolCalls: toolCallRecords
+                        )
+                    }
+                    
+                    // Execute each tool call
+                    var toolResults: [LLMToolResult] = []
+                    for tc in toolCalls {
+                        let result = await executeToolCall(tc, context: context)
+                        toolResults.append(result)
+                    }
+                    
+                    // Add tool results to conversation as tool messages
+                    for tr in toolResults {
+                        conversationHistory.append(
+                            AgentMessage(
+                                role: .assistant, // Will be rendered as tool result
+                                content: tr.result,
+                                timestamp: Date(),
+                                toolCalls: [ToolCall(id: tr.toolCallId, name: tr.name, parameters: [:], result: tr.result)]
+                            )
+                        )
+                    }
+                    
+                    // Continue loop - send tool results back to LLM
+                    continue
+                }
+                
+                // No tool calls - we have a final response
+                workflowState = .completing
+                break
+                
+            } catch {
                 if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
                     let cur = conversationHistory[i]
+                    let note = "⚠️ \(error.localizedDescription)"
                     conversationHistory[i] = AgentMessage(
                         id: assistantId,
-                        role: .assistant, content: cur.content + piece,
-                        timestamp: cur.timestamp, toolCalls: cur.toolCalls
+                        role: .assistant,
+                        content: cur.content.isEmpty ? note : cur.content + "\n\n" + note,
+                        timestamp: cur.timestamp,
+                        toolCalls: cur.toolCalls
                     )
                 }
+                break
             }
-        } catch {
+        }
+        
+        if iteration >= maxIterations {
             if let i = conversationHistory.firstIndex(where: { $0.id == assistantId }) {
                 let cur = conversationHistory[i]
-                let note = "⚠️ \(error.localizedDescription)"
                 conversationHistory[i] = AgentMessage(
                     id: assistantId,
                     role: .assistant,
-                    content: cur.content.isEmpty ? note : cur.content + "\n\n" + note,
-                    timestamp: cur.timestamp, toolCalls: cur.toolCalls
+                    content: cur.content + "\n\n⚠️ Maximum iterations reached. Stopping.",
+                    timestamp: cur.timestamp,
+                    toolCalls: cur.toolCalls
                 )
             }
         }
-
-        workflowState = .completing
-        workflowState = .idle
+    }
+    
+    /// Execute a single tool call and return result
+    private func executeToolCall(_ call: LLMToolCall, context: AgentContext) async -> LLMToolResult {
+        guard let tool = allTools.first(where: { $0.name == call.name }) else {
+            return LLMToolResult(toolCallId: call.id, name: call.name, result: "", error: "Unknown tool: \(call.name)")
+        }
+        
+        let parameters = parseToolArguments(call.arguments)
+        
+        do {
+            let value = try await tool.action(parameters)
+            // Handle Any result - optional or concrete value
+            let resultStr: String
+            if let opt = value as? String? {
+                resultStr = opt ?? "Done"
+            } else if let str = value as? String {
+                resultStr = str
+            } else {
+                resultStr = String(describing: value)
+            }
+            return LLMToolResult(toolCallId: call.id, name: call.name, result: resultStr.isEmpty ? "Done" : resultStr, error: nil)
+        } catch {
+            return LLMToolResult(toolCallId: call.id, name: call.name, result: "", error: error.localizedDescription)
+        }
+    }
+    
+    /// Parse JSON arguments string to dictionary
+    private func parseToolArguments(_ jsonStr: String) -> [String: Any] {
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // Try simple key:value parsing as fallback
+            var params: [String: Any] = [:]
+            let parts = jsonStr.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            for part in parts {
+                let kv = part.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+                if kv.count == 2 {
+                    let key = kv[0].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                    let val = kv[1].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                    params[key] = val
+                }
+            }
+            return params
+        }
+        return obj
+    }
+    
+    /// All available tools (computed property for tool execution)
+    private var allTools: [ToolInfo] {
+        extensionSystem.getTools()
     }
 
     /// Directly invoke a registered tool by name (used by the panel's tool launcher).
@@ -255,39 +406,112 @@ struct ToolResult {
     let error: Error?
 }
 
-struct ToolInfo {
-    let name: String
-    let description: String
-    let parameters: [String: ParameterProperty]
-    let action: AgenticToolAction
-    
-    typealias AgenticToolAction = ([String: Any]) async throws -> Any
-    
-    func supportsIntent(_ intent: AgentIntent) -> Bool {
-        switch intent.type {
-        case .theme_management:
-            return name == "apply_theme"
-        case .file_access:
-            return name == "file_tree"
-        case .terminal_command:
-            return name == "terminal_execute"
-        case .session_management:
-            return name == "macterm_new_tab"
-        default:
-            return false
-        }
-    }
-}
-
 struct ParameterProperty {
     let type: ParameterType
     let description: String
     let defaultValue: Any?
+    let enumValues: [String]?
+    let items: ParameterPropertyBox? // for array type
+    
+    init(type: ParameterType, description: String, defaultValue: Any? = nil, enumValues: [String]? = nil, items: ParameterPropertyBox? = nil) {
+        self.type = type
+        self.description = description
+        self.defaultValue = defaultValue
+        self.enumValues = enumValues
+        self.items = items
+    }
+    /// JSON Schema representation for function calling
+    var jsonSchema: [String: Any] {
+        var schema: [String: Any] = [
+            "type": type.schemaType,
+            "description": description
+        ]
+        if let enumValues = enumValues, !enumValues.isEmpty {
+            schema["enum"] = enumValues
+        }
+        if let defaultValue = defaultValue {
+            schema["default"] = defaultValue
+        }
+        if type == .array, let items = items {
+            schema["items"] = items.value.jsonSchema
+        }
+        return schema
+    }
+}
+
+/// Box to allow recursive ParameterProperty reference
+final class ParameterPropertyBox {
+    let value: ParameterProperty
+    init(_ value: ParameterProperty) { self.value = value }
 }
 
 enum ParameterType {
     case string, number, boolean, object, array
+    
+    var schemaType: String {
+        switch self {
+        case .string: return "string"
+        case .number: return "number"
+        case .boolean: return "boolean"
+        case .object: return "object"
+        case .array: return "array"
+        }
+    }
 }
+
+/// Tool information for function calling with JSON Schema support
+
+/// Tool information for function calling with JSON Schema support
+struct ToolInfo {
+    let name: String
+    let description: String
+    let parameters: [String: ParameterProperty]
+    let action: ([String: Any]) async throws -> Any
+    let supportsIntent: (AgentIntent) -> Bool
+    
+    init(
+        name: String,
+        description: String,
+        parameters: [String: ParameterProperty] = [:],
+        supportsIntent: @escaping (AgentIntent) -> Bool = { _ in true },
+        action: @escaping ([String: Any]) async throws -> Any
+    ) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.supportsIntent = supportsIntent
+        self.action = action
+    }
+    
+    /// OpenAI-compatible function schema for structured function calling
+    var jsonSchema: [String: Any] {
+        var properties: [String: Any] = [:]
+        var required: [String] = []
+        
+        for (key, prop) in parameters {
+            properties[key] = prop.jsonSchema
+            // Consider a property required if it has no default value
+            if prop.defaultValue == nil {
+                required.append(key)
+            }
+        }
+        
+        return [
+            "type": "function",
+            "function": [
+                "name": name,
+                "description": description,
+                "parameters": [
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": false
+                ]
+            ]
+        ]
+    }
+}
+
 
 struct AgentIntent {
     let type: IntentType
@@ -598,21 +822,104 @@ extension ProviderConfig {
     ]
 }
 
+// MARK: - Function Calling Types
+
+/// A tool call requested by the LLM
+struct LLMToolCall: Codable, Equatable {
+    let id: String
+    let name: String
+    let arguments: String // JSON string of arguments
+}
+
+/// Result of a tool execution to send back to LLM
+struct LLMToolResult: Codable, Equatable {
+    let toolCallId: String
+    let name: String
+    let result: String
+    let error: String?
+}
+
+/// Message in the conversation for function calling
+enum ChatMessage: Codable, Equatable {
+    case system(String)
+    case user(String)
+    case assistant(String, toolCalls: [LLMToolCall]?)
+    case tool(LLMToolResult)
+    
+    var role: String {
+        switch self {
+        case .system: return "system"
+        case .user: return "user"
+        case .assistant: return "assistant"
+        case .tool: return "tool"
+        }
+    }
+    
+    var content: String? {
+        switch self {
+        case .system(let c), .user(let c): return c
+        case .assistant(let c, _): return c
+        case .tool(let r): return r.result
+        }
+    }
+    
+    var toolCalls: [LLMToolCall]? {
+        if case .assistant(_, let calls) = self { return calls }
+        return nil
+    }
+    
+    var toolCallId: String? {
+        if case .tool(let r) = self { return r.toolCallId }
+        return nil
+    }
+    
+    func toOpenAIFormat() -> [String: Any] {
+        switch self {
+        case .system(let c):
+            return ["role": "system", "content": c]
+        case .user(let c):
+            return ["role": "user", "content": c]
+        case .assistant(let c, let calls):
+            var dict: [String: Any] = ["role": "assistant", "content": c]
+            if let calls = calls, !calls.isEmpty {
+                dict["tool_calls"] = calls.map { call in
+                    [
+                        "id": call.id,
+                        "type": "function",
+                        "function": [
+                            "name": call.name,
+                            "arguments": call.arguments
+                        ]
+                    ]
+                }
+            }
+            return dict
+        case .tool(let r):
+            return [
+                "role": "tool",
+                "tool_call_id": r.toolCallId,
+                "name": r.name,
+                "content": r.result
+            ]
+        }
+    }
+}
+
 // MARK: - Provider protocol (streaming by default)
 
 protocol AgentProvider {
     var config: ProviderConfig { get }
-    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse
-    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error>
+    func generateResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) async throws -> AIResponse
+    func streamResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) -> AsyncThrowingStream<String, Error>
 }
 
 extension AgentProvider {
     /// Default streaming: wrap the non-streaming call as a single token.
-    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
+    func streamResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let r = try await generateResponse(input: input, intent: intent, toolResults: toolResults, context: context)
+                    let r = try await generateResponse(messages: messages, tools: tools, context: context)
                     continuation.yield(r.text)
                     continuation.finish()
                 } catch {
@@ -625,21 +932,53 @@ extension AgentProvider {
 
 // MARK: - Shared prompt/message builders
 
-private func buildChatMessages(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> [[String: String]] {
-    var m: [[String: String]] = []
-    m.append(["role": "system",
-              "content": "You are \(ProcessInfo.processInfo.processName)'s built-in assistant for terminal, file, theme and session tasks. Be concise and concrete."])
-    if !toolResults.isEmpty {
-        let summary = toolResults.map { r -> String in
-            if let e = r.error { return "\(r.toolName) error: \(e.localizedDescription)" }
-            return "\(r.toolName): \(r.result.map { String(describing: $0) } ?? "ok")"
-        }.joined(separator: "\n")
-        m.append(["role": "system", "content": "Tool results:\n\(summary)"])
+/// Build the system prompt with available tools
+private func buildSystemPrompt(tools: [ToolInfo]) -> String {
+    var prompt = "You are \(ProcessInfo.processInfo.processName)'s built-in assistant for terminal, file, theme and session tasks. Be concise and concrete.\n\n"
+    if !tools.isEmpty {
+        prompt += "You have access to the following tools. Use them when appropriate:\n"
+        for tool in tools {
+            prompt += "- \(tool.name): \(tool.description)\n"
+            if !tool.parameters.isEmpty {
+                prompt += "  Parameters: \(tool.parameters.keys.joined(separator: ", "))\n"
+            }
+        }
+        prompt += "\nWhen you need to use a tool, respond with a tool call. The system will execute it and return the result.\n"
     }
-    m.append(["role": "user", "content": input])
-    return m
+    return prompt
 }
 
+/// Convert conversation history to ChatMessage array for function calling
+private func buildMessages(
+    history: [AgentMessage],
+    tools: [ToolInfo],
+    context: AgentContext
+) -> [ChatMessage] {
+    var messages: [ChatMessage] = []
+    messages.append(.system(buildSystemPrompt(tools: tools)))
+    
+    for msg in history {
+        switch msg.role {
+        case .user:
+            messages.append(.user(msg.content))
+        case .assistant:
+            if !msg.toolCalls.isEmpty {
+                let llmCalls = msg.toolCalls.map { tc in
+                    LLMToolCall(id: tc.id, name: tc.name, arguments: tc.parameters.compactMap { "\($0.key): \($0.value)" }.joined(separator: ", "))
+                }
+                messages.append(.assistant(msg.content, toolCalls: llmCalls))
+            } else {
+                messages.append(.assistant(msg.content, toolCalls: nil))
+            }
+        case .system:
+            messages.append(.system(msg.content))
+        }
+    }
+    
+    return messages
+}
+
+/// Legacy prompt builder for providers that don't support function calling
 private func buildPrompt(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> String {
     var s = "You are a terminal assistant. Be concise and concrete.\n"
     if !toolResults.isEmpty {
@@ -655,25 +994,23 @@ struct MockProvider: AgentProvider {
     let config: ProviderConfig
     init(_ config: ProviderConfig = ProviderConfig(name: "Mock", type: .mock)) { self.config = config }
 
-    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
-        let responseText: String
-        switch intent.type {
-        case .theme_management:
+    func generateResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) async throws -> AIResponse {
+        // Simple mock that responds based on last user message
+        let lastUser = messages.last { if case .user = $0 { return true }; return false }
+        let input = lastUser?.content ?? ""
+        let lowercased = input.lowercased()
+        
+        var responseText: String
+        if lowercased.contains("theme") || lowercased.contains("appearance") {
             responseText = "I'll help you apply the theme. The theme \(extractThemeName(from: input) ?? "onedark") will be applied to your terminal."
-        case .file_access:
+        } else if lowercased.contains("file") || lowercased.contains("directory") || lowercased.contains("folder") || lowercased.contains("open") {
             responseText = "I'll help you access the file system. I can show you the directory structure and contents."
-        case .terminal_command:
+        } else if lowercased.contains("terminal") || lowercased.contains("execute") || lowercased.contains("run") || lowercased.contains("command") || lowercased.contains("cd") || lowercased.contains("clear") {
             responseText = "I'll execute your terminal command: \(input)"
-        case .tool_execution:
+        } else {
             responseText = "I'll help you with that request using the available tools."
-        case .settings_modification:
-            responseText = "I'll help you modify settings. What would you like to change?"
-        case .project_analysis:
-            responseText = "I'll analyze your project structure and provide insights."
-        case .session_management:
-            responseText = "I'll help manage your sessions and workspaces."
         }
-        return AIResponse(text: responseText, intent: intent, confidence: 0.85)
+        return AIResponse(text: responseText, intent: AgentIntent(type: .tool_execution), confidence: 0.85)
     }
 }
 
@@ -683,32 +1020,41 @@ struct OpenAICompatibleProvider: AgentProvider {
     let config: ProviderConfig
     init(_ config: ProviderConfig) { self.config = config }
 
-    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+    func generateResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) async throws -> AIResponse {
         do {
-            let req = try Self.makeRequest(config: config,
-                                           messages: buildChatMessages(input: input, intent: intent, toolResults: toolResults, context: context),
-                                           stream: false)
+            let req = try Self.makeRequest(config: config, messages: messages, tools: tools, stream: false)
             let (data, resp) = try await URLSession.shared.data(for: req)
             try Self.assertOK(resp, data: data)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = json["choices"] as? [[String: Any]],
-                  let message = choices.first?["message"] as? [String: Any],
-                  let text = message["content"] as? String else { throw AgentProviderError.parseFailed }
-            return AIResponse(text: text.trimmingCharacters(in: .whitespacesAndNewlines), intent: intent, confidence: 0.95)
+                  let message = choices.first?["message"] as? [String: Any] else { throw AgentProviderError.parseFailed }
+            
+            // Handle tool calls
+            if let toolCalls = message["tool_calls"] as? [[String: Any]], !toolCalls.isEmpty {
+                // Return tool calls as JSON for the agent loop to execute
+                let toolCallsData = try JSONSerialization.data(withJSONObject: toolCalls)
+                let toolCallsJson = String(data: toolCallsData, encoding: .utf8) ?? "[]"
+                return AIResponse(text: toolCallsJson, intent: AgentIntent(type: .tool_execution), confidence: 0.95)
+            }
+            
+            let text = message["content"] as? String ?? ""
+            return AIResponse(text: text.trimmingCharacters(in: .whitespacesAndNewlines), intent: AgentIntent(type: .tool_execution), confidence: 0.95)
         } catch {
             throw Self.map(error)
         }
     }
 
-    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
+    func streamResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    let req = try Self.makeRequest(config: config,
-                                                   messages: buildChatMessages(input: input, intent: intent, toolResults: toolResults, context: context),
-                                                   stream: true)
+                    let req = try Self.makeRequest(config: config, messages: messages, tools: tools, stream: true)
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
                     try Self.assertOK(resp, data: nil)
+                    var buffer = ""
+                    var toolCallsBuffer: [[String: Any]] = []
+                    var isToolCall = false
+                    
                     for try await line in bytes.lines {
                         let l = line.trimmingCharacters(in: .whitespaces)
                         guard l.hasPrefix("data:") else { continue }
@@ -716,10 +1062,45 @@ struct OpenAICompatibleProvider: AgentProvider {
                         if payload == "[DONE]" { break }
                         if let json = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
                            let choices = json["choices"] as? [[String: Any]],
-                           let delta = choices.first?["delta"] as? [String: Any],
-                           let piece = delta["content"] as? String {
-                            continuation.yield(piece)
+                           let delta = choices.first?["delta"] as? [String: Any] {
+                            
+                            // Handle tool calls in streaming
+                            if let toolCalls = delta["tool_calls"] as? [[String: Any]] {
+                                isToolCall = true
+                                for tc in toolCalls {
+                                    let index = (tc["index"] as? Int) ?? 0
+                                    while toolCallsBuffer.count <= index {
+                                        toolCallsBuffer.append([:])
+                                    }
+                                    // Merge tool call chunks
+                                    if let id = tc["id"] as? String { toolCallsBuffer[index]["id"] = id }
+                                    if let type = tc["type"] as? String { toolCallsBuffer[index]["type"] = type }
+                                    if let function = tc["function"] as? [String: Any] {
+                                        var fn = toolCallsBuffer[index]["function"] as? [String: Any] ?? [:]
+                                        if let name = function["name"] as? String { fn["name"] = name }
+                                        if let args = function["arguments"] as? String {
+                                            fn["arguments"] = (fn["arguments"] as? String ?? "") + args
+                                        }
+                                        toolCallsBuffer[index]["function"] = fn
+                                    }
+                                }
+                            }
+                            
+                            // Handle content
+                            if let piece = delta["content"] as? String, !piece.isEmpty {
+                                if !isToolCall {
+                                    continuation.yield(piece)
+                                }
+                                buffer += piece
+                            }
                         }
+                    }
+                    
+                    // If we got tool calls, send them as a special marker
+                    if !toolCallsBuffer.isEmpty {
+                        let toolCallsData = try JSONSerialization.data(withJSONObject: toolCallsBuffer)
+                        let toolCallsJson = String(data: toolCallsData, encoding: .utf8) ?? "[]"
+                        continuation.yield("__TOOL_CALLS__:" + toolCallsJson)
                     }
                     continuation.finish()
                 } catch {
@@ -729,7 +1110,7 @@ struct OpenAICompatibleProvider: AgentProvider {
         }
     }
 
-    static func makeRequest(config: ProviderConfig, messages: [[String: String]], stream: Bool) throws -> URLRequest {
+    static func makeRequest(config: ProviderConfig, messages: [ChatMessage], tools: [ToolInfo], stream: Bool) throws -> URLRequest {
         let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(base)/chat/completions") else { throw AgentProviderError.parseFailed }
         var req = URLRequest(url: url)
@@ -740,8 +1121,20 @@ struct OpenAICompatibleProvider: AgentProvider {
             req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
         req.timeoutInterval = 60
-        var body: [String: Any] = ["model": config.effectiveModel, "messages": messages,
-                                   "temperature": config.temperature]
+        
+        let openAIMessages = messages.map { $0.toOpenAIFormat() }
+        
+        var body: [String: Any] = [
+            "model": config.effectiveModel,
+            "messages": openAIMessages,
+            "temperature": config.temperature
+        ]
+        
+        if !tools.isEmpty {
+            body["tools"] = tools.map { $0.jsonSchema }
+            body["tool_choice"] = "auto"
+        }
+        
         if stream { body["stream"] = true }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return req
@@ -772,22 +1165,22 @@ struct OpenAICompatibleProvider: AgentProvider {
     }
 }
 
-// MARK: - HuggingFace Inference API
+// MARK: - HuggingFace Inference API (legacy, no function calling)
 
 struct HuggingFaceProvider: AgentProvider {
     let config: ProviderConfig
     init(_ config: ProviderConfig) { self.config = config }
 
-    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+    func generateResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) async throws -> AIResponse {
         do {
-            let t = try await Self.generate(config: config, input: input, intent: intent, toolResults: toolResults, context: context)
-            return AIResponse(text: t, intent: intent, confidence: 0.9)
+            let t = try await Self.generate(config: config, messages: messages)
+            return AIResponse(text: t, intent: AgentIntent(type: .tool_execution), confidence: 0.9)
         } catch {
             throw Self.map(error)
         }
     }
 
-    static func generate(config: ProviderConfig, input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> String {
+    static func generate(config: ProviderConfig, messages: [ChatMessage]) async throws -> String {
         guard let key = config.apiKey, !key.isEmpty else { throw AgentProviderError.missingKey }
         let base = config.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(base)/models/\(config.effectiveModel)") else { throw AgentProviderError.parseFailed }
@@ -796,7 +1189,17 @@ struct HuggingFaceProvider: AgentProvider {
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = 60
-        let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
+        
+        // Convert messages to single prompt for HF
+        let prompt = messages.map { msg in
+            switch msg {
+            case .system(let c): return "System: \(c)"
+            case .user(let c): return "User: \(c)"
+            case .assistant(let c, _): return "Assistant: \(c)"
+            case .tool(let r): return "Tool \(r.name): \(r.result)"
+            }
+        }.joined(separator: "\n")
+        
         let body: [String: Any] = ["inputs": prompt,
                                    "parameters": ["return_full_text": false,
                                                   "temperature": config.temperature]]
@@ -825,16 +1228,24 @@ struct FoundationProvider: AgentProvider {
     let config: ProviderConfig
     init(_ config: ProviderConfig) { self.config = config }
 
-    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
+    func generateResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) async throws -> AIResponse {
         var full = ""
-        for try await piece in streamResponse(input: input, intent: intent, toolResults: toolResults, context: context) {
+        for try await piece in streamResponse(messages: messages, tools: tools, context: context) {
             full += piece
         }
-        return AIResponse(text: full, intent: intent, confidence: 0.95)
+        return AIResponse(text: full, intent: AgentIntent(type: .tool_execution), confidence: 0.95)
     }
 
-    func streamResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) -> AsyncThrowingStream<String, Error> {
-        let prompt = buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)
+    func streamResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) -> AsyncThrowingStream<String, Error> {
+        // FoundationModels doesn't support function calling yet, convert to prompt
+        let prompt = messages.map { msg in
+            switch msg {
+            case .system(let c): return "System: \(c)"
+            case .user(let c): return "User: \(c)"
+            case .assistant(let c, _): return "Assistant: \(c)"
+            case .tool(let r): return "Tool \(r.name): \(r.result)"
+            }
+        }.joined(separator: "\n")
         return AsyncThrowingStream { continuation in
             Task { @MainActor in
                 do {
@@ -865,11 +1276,21 @@ struct OMPAgentProvider: AgentProvider {
     let config: ProviderConfig
     init(_ config: ProviderConfig = ProviderConfig(name: "OMP", type: .omp)) { self.config = config }
 
-    func generateResponse(input: String, intent: AgentIntent, toolResults: [ToolResult], context: AgentContext) async throws -> AIResponse {
-        if let text = await Self.run(prompt: buildPrompt(input: input, intent: intent, toolResults: toolResults, context: context)) {
-            return AIResponse(text: text, intent: intent, confidence: 0.9)
+    func generateResponse(messages: [ChatMessage], tools: [ToolInfo], context: AgentContext) async throws -> AIResponse {
+        // Convert messages to prompt for OMP CLI
+        let prompt = messages.map { msg in
+            switch msg {
+            case .system(let c): return "System: \(c)"
+            case .user(let c): return "User: \(c)"
+            case .assistant(let c, _): return "Assistant: \(c)"
+            case .tool(let r): return "Tool \(r.name): \(r.result)"
+            }
+        }.joined(separator: "\n")
+        
+        if let text = await Self.run(prompt: prompt) {
+            return AIResponse(text: text, intent: AgentIntent(type: .tool_execution), confidence: 0.9)
         }
-        return try await MockProvider(config).generateResponse(input: input, intent: intent, toolResults: toolResults, context: context)
+        return try await MockProvider(config).generateResponse(messages: messages, tools: tools, context: context)
     }
 
     static func run(prompt: String) async -> String? {
