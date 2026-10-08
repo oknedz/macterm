@@ -80,14 +80,20 @@ jobs:
       - name: Select workflow files
         id: files
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "$BASE_REF"
-            git diff --name-only "origin/${BASE_REF}...HEAD" -- \
-              '.github/workflows/*.yml' '.github/workflows/*.yaml' > "$RUNNER_TEMP/files.txt"
+            # The changed-file list comes from the API, not from `git fetch origin
+            # main`: this job checks out with `persist-credentials: false`, so an
+            # unauthenticated fetch of the base branch dies with
+            # "could not read Username for 'https://github.com'" on a private repo.
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --jq '.[].filename' > "$RUNNER_TEMP/changed.txt"
+            grep -E '^\.github/workflows/[^/]+\.ya?ml$' "$RUNNER_TEMP/changed.txt" \
+              > "$RUNNER_TEMP/files.txt" || true
           else
             git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' > "$RUNNER_TEMP/files.txt"
           fi
