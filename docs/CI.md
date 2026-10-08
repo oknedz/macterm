@@ -11,7 +11,6 @@ runs on the `xcode-27` runner (macOS 27, Apple Silicon).
 | `.github/workflows/release.yml` | push tag `v*` | builds Release, packages `MacTerm-Release.dmg`, publishes a GitHub release |
 | `.github/workflows/lint-workflows.yml` | PRs/pushes touching `.github/**` | `actionlint` + `zizmor` on the workflow files, with pinned versions and checksums |
 | `.github/workflows/auto-pr.yml` | push to `feature/**`, `fix/**`, `refactor/**`, `chore/**`, `docs/**` | opens a PR against `main` |
-| `.github/dependabot.yml` | nightly 16:00 UTC | `github-actions` bumps only |
 | `.github/CODEOWNERS` | — | `* @oknedz`; inert until code-owner review is required |
 | `.github/PULL_REQUEST_TEMPLATE.md` | — | what changed, how it was verified, risk/rollback, checklist |
 
@@ -19,6 +18,11 @@ runs on the `xcode-27` runner (macOS 27, Apple Silicon).
 job instead of two. `lint-workflows.yml` is path-filtered, so it produces **no** check run
 on a code-only PR — do not add it to required status checks without removing the `paths:`
 filters in the same change.
+
+**No workflow artifacts.** Nothing is uploaded to the Actions artifacts tab, and the DMG is
+built on the same runner that publishes it, so there is no upload/download round-trip
+between jobs. The GitHub release is the only place a build appears; pull it from there if
+you want it.
 
 ## Local gate — the same commands
 
