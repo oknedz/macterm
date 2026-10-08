@@ -12,10 +12,10 @@ permissions:
 
 jobs:
   # One job, not two. Splitting build from publish means passing the DMG between
-  # them as a workflow artifact, and there is no reason to: a macOS app produces
-  # one file, and the runner that built it can attach it to the release directly.
-  # Nothing is uploaded to the Actions artifacts tab — the release is the only
-  # place a build appears, and you pull it from there if you want it.
+  # them as a workflow artifact and downloading it back on the publishing runner —
+  # a round-trip that exists only because the jobs are separate. Built and kept in
+  # one place: the DMG is uploaded as a workflow artifact and, on a tag push,
+  # attached to the GitHub release. Nothing is ever pulled to a local machine.
   release:
     name: Build and publish DMG
     runs-on: xcode-27
@@ -47,6 +47,17 @@ jobs:
       # the build you tested on your machine.
       - name: Package release
         run: scripts/package-release.sh dist
+
+      # The build is kept on GitHub, not shipped anywhere. Nothing in this workflow
+      # pulls the DMG to a machine; you download it from the artifact list or the
+      # release page if and when you want it.
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MacTerm-Release
+          path: dist/MacTerm-Release.dmg
+          if-no-files-found: error
+          retention-days: 14
 
       - name: List DMG
         run: ls -lh dist/*.dmg

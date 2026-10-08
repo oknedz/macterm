@@ -19,10 +19,11 @@ job instead of two. `lint-workflows.yml` is path-filtered, so it produces **no**
 on a code-only PR — do not add it to required status checks without removing the `paths:`
 filters in the same change.
 
-**No workflow artifacts.** Nothing is uploaded to the Actions artifacts tab, and the DMG is
-built on the same runner that publishes it, so there is no upload/download round-trip
-between jobs. The GitHub release is the only place a build appears; pull it from there if
-you want it.
+**Artifacts stay on GitHub.** The release job uploads `MacTerm-Release.dmg` as a workflow
+artifact (14-day retention) and, on a tag push, attaches it to the GitHub release. Nothing
+in any workflow downloads a build to a machine — you fetch it from the artifact list or the
+release page when you want it. There is no `download-artifact` step anywhere in this repo:
+the build and the publish happen in one job, so there is nothing to hand across.
 
 ## Local gate — the same commands
 
