@@ -49,7 +49,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Download DMG
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: MacTerm-Release
           path: artifacts/
