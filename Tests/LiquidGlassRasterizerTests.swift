@@ -10,7 +10,6 @@
 
 import XCTest
 import CoreGraphics
-@testable import macterm
 
 final class LiquidGlassRasterizerTests: XCTestCase {
 

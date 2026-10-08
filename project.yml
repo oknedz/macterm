@@ -6,7 +6,9 @@ options:
   createIntermediateGroups: true
 packages:
   SwiftTerm:
-    path: ../SwiftTermVendor
+    # Vendored in-repo: this is a local fork of migueldeicaza/SwiftTerm and is
+    # not reproducible from upstream. Do not repoint this at the remote.
+    path: SwiftTermVendor
   Highlightr:
     url: https://github.com/raspu/Highlightr
     branch: master
@@ -23,6 +25,7 @@ targets:
           - task
           - scripts
           - macterm
+          - SwiftTermVendor
           - Tests
     info:
       path: Info.plist
@@ -47,7 +50,6 @@ targets:
     platform: macOS
     sources:
       - path: Tests
-      - path: Tests/LiquidGlassRasterizerTests.swift
       - path: Glass/LiquidGlassAlgorithm.swift
       - path: Glass/LiquidGlassRenderer.swift
       - path: Glass/LiquidGlassGlassView.swift
