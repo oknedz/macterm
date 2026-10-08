@@ -4,54 +4,40 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # Bump when XcodeGen changes the generated project in a way that invalidates
-  # the cache, or when SwiftTerm's toolchain floor moves.
+  # Bump when XcodeGen changes the generated project in a way that invalidates the
+  # cache, or when SwiftTerm's toolchain floor moves.
   CACHE_EPOCH: v1
 
 jobs:
-  build:
-    name: Build (Debug + Release)
-    runs-on: xcode-27
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - name: Show toolchain
-        run: xcodebuild -version && swift --version
-      - name: Install XcodeGen
-        run: |
-          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
-          xcodegen --version
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/Library/Developer/Xcode/DerivedData
-            ~/Library/Caches/org.swift.swiftpm
-          key: ${{ env.CACHE_EPOCH }}-build-${{ hashFiles('project.yml', '**/*.swift', 'macterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: ${{ env.CACHE_EPOCH }}-build-
-      - name: Generate Xcode project
-        run: xcodegen generate
-      - name: Build Debug
-        run: xcodebuild build -project macterm.xcodeproj -scheme macterm -configuration Debug -destination 'platform=macOS' -onlyUsePackageVersionsFromResolvedFile
-      - name: Build Release
-        run: xcodebuild build -project macterm.xcodeproj -scheme macterm -configuration Release -destination 'platform=macOS' -onlyUsePackageVersionsFromResolvedFile
-
+  # macOS only: this is a single-platform app. The runner cannot be macos-latest
+  # because the vendored SwiftTerm declares swift-tools-version 6.2, which older
+  # images reject at package-resolution time — not at compile time.
   test:
-    name: Unit tests
+    name: Tests
     runs-on: xcode-27
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
           xcodegen --version
+
+      - name: Install xcbeautify
+        # Log formatting only, not a build requirement. Guarded install because the
+        # runner image may already ship it.
+        run: |
+          if ! command -v xcbeautify >/dev/null; then brew install xcbeautify; fi
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -59,7 +45,85 @@ jobs:
             ~/Library/Caches/org.swift.swiftpm
           key: ${{ env.CACHE_EPOCH }}-test-${{ hashFiles('project.yml', '**/*.swift', 'macterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: ${{ env.CACHE_EPOCH }}-test-
+
+      # The committed macterm.xcodeproj is generated output. Regenerating before
+      # every build means CI tests project.yml, not whatever the last person
+      # happened to commit.
       - name: Generate Xcode project
         run: xcodegen generate
-      - name: Test mactermTests
-        run: xcodebuild test -project macterm.xcodeproj -scheme mactermTests -destination 'platform=macOS' -onlyUsePackageVersionsFromResolvedFile
+
+      - name: Run unit tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project macterm.xcodeproj \
+            -scheme mactermTests \
+            -destination 'platform=macOS' \
+            -onlyUsePackageVersionsFromResolvedFile \
+            | xcbeautify
+
+  build:
+    name: Build (Debug + Release)
+    runs-on: xcode-27
+    timeout-minutes: 45
+    needs: [test]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: xcodebuild -version && swift --version
+
+      # The xcode-27 image ships without the Metal toolchain, and SwiftTerm
+      # compiles Metal shaders under Sources/SwiftTerm/Apple/Metal. Without this
+      # the build dies at "cannot execute tool 'metal' due to missing Metal
+      # Toolchain". Only the build job needs it — mactermTests compiles no Swift.
+      - name: Install Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+          xcodegen --version
+
+      - name: Install xcbeautify
+        # Log formatting only, not a build requirement. Guarded install because the
+        # runner image may already ship it.
+        run: |
+          if ! command -v xcbeautify >/dev/null; then brew install xcbeautify; fi
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ env.CACHE_EPOCH }}-build-${{ hashFiles('project.yml', '**/*.swift', 'macterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: ${{ env.CACHE_EPOCH }}-build-
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      # Package versions come from the committed Package.resolved, so a changed
+      # dependency in project.yml fails here instead of silently resolving to a new
+      # version on the runner.
+      - name: Build Debug
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project macterm.xcodeproj \
+            -scheme macterm \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -onlyUsePackageVersionsFromResolvedFile \
+            | xcbeautify
+
+      - name: Build Release
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project macterm.xcodeproj \
+            -scheme macterm \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -onlyUsePackageVersionsFromResolvedFile \
+            | xcbeautify

@@ -2,38 +2,68 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to publish the DMG under'
-        required: true
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
 
 jobs:
-  dmg:
+  # macOS only — a macOS app produces a single DMG, so there is no matrix here.
+  # The DMG is assembled by scripts/package-release.sh, the same script used
+  # locally, so a release cannot differ from what was tested on this machine.
+  build:
     name: Build DMG
     runs-on: xcode-27
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
           xcodegen --version
+
+      # The xcode-27 image ships without the Metal toolchain, and SwiftTerm
+      # compiles Metal shaders. Same reason as the CI build job.
+      - name: Install Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
       - name: Package release
         run: scripts/package-release.sh dist
+
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: MacTerm-Release
           path: dist/MacTerm-Release.dmg
-      - name: Publish GitHub release
-        if: github.event_name == 'push'
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: MacTerm-Release
+          path: artifacts/
+
+      - name: List artifacts
+        run: find artifacts -type f -name "*.dmg" | sort
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.dmg
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/MacTerm-Release.dmg --generate-notes
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

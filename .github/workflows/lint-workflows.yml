@@ -1,0 +1,145 @@
+# Lints the workflow files themselves.
+#
+# Why this exists: a YAML error in a workflow file does not fail loudly on the
+# commit that introduced it. GitHub cannot read the `on:` block, so the trigger
+# set collapses to `push` on every branch, and the broken file reports every
+# commit as a failed run that never started a job. Diagnosing that costs more
+# than any lint finding it prevents.
+#
+# The ratchet, stated plainly:
+#   - On a pull request, only the workflow files THAT PR TOUCHED are linted, and
+#     the result blocks the merge. New problems cannot land.
+#   - On main, every workflow file is linted and the result is REPORTED, not
+#     enforced, because the repository already carries a backlog. When the
+#     backlog reaches zero, flip `continue-on-error` to false on both lint
+#     steps. That is a one-line change with a known end state; a blanket waiver
+#     would have neither.
+#
+# Note for branch protection: this workflow is path-filtered, so it produces no
+# check run on a code-only PR. A required status check that never reports blocks
+# every pull request forever — do not add "Lint Workflows" to required checks
+# unless the `paths:` filters are removed in the same change.
+name: Lint Workflows
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-workflows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned version and checksum for every binary this job downloads. An unpinned
+  # URL is the supply-chain risk the job exists to report, so reproducing it
+  # here would be self-refuting.
+  ACTIONLINT_VERSION: '1.7.12'
+  ACTIONLINT_SHA256: '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8'
+  ZIZMOR_VERSION: '1.30.1'
+  ZIZMOR_SHA256: 'e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a'
+
+jobs:
+  lint:
+    name: Lint Workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          # This job only reads files. Leaving the checkout token on disk would
+          # hand it to every later step for no benefit.
+          persist-credentials: false
+
+      - name: Install linters
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/tools"
+          mkdir -p "$tools"
+          curl -fsSL -o "$tools/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${tools}/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$tools/actionlint.tar.gz" -C "$tools" actionlint
+          curl -fsSL -o "$tools/zizmor.tar.gz" \
+            "https://github.com/woodruffw/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  ${tools}/zizmor.tar.gz" | sha256sum --check
+          tar -xzf "$tools/zizmor.tar.gz" -C "$tools" zizmor
+          echo "$tools" >> "$GITHUB_PATH"
+
+      - name: Select workflow files
+        id: files
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            git diff --name-only "origin/${BASE_REF}...HEAD" -- \
+              '.github/workflows/*.yml' '.github/workflows/*.yaml' > "$RUNNER_TEMP/files.txt"
+          else
+            git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml' > "$RUNNER_TEMP/files.txt"
+          fi
+          # One redirect, not four: shellcheck's SC2129, which is the same
+          # advice this job hands to the workflows it checks.
+          {
+            echo "count=$(wc -l < "$RUNNER_TEMP/files.txt" | tr -d ' ')"
+            echo "list<<EOF"
+            cat "$RUNNER_TEMP/files.txt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: actionlint
+        continue-on-error: ${{ github.event_name == 'push' }}
+        env:
+          FILE_COUNT: ${{ steps.files.outputs.count }}
+          # Passed through the environment, never interpolated into the script:
+          # these names come from a pull request's branch, so splicing them
+          # into a shell command is the template-injection shape zizmor audits.
+          FILE_LIST: ${{ steps.files.outputs.list }}
+        run: |
+          set -euo pipefail
+          if [ "$FILE_COUNT" = "0" ]; then
+            echo "No workflow files to lint."
+            exit 0
+          fi
+          mapfile -t files <<< "$FILE_LIST"
+          # actionlint 1.7.12 ships a static list of runner labels that predates the
+          # xcode-27 preview image, so it reports `label "xcode-27" is unknown` on
+          # every file that uses it. GitHub resolved the label — CI ran on it — so
+          # this is actionlint's list being stale, not the workflow. Scoped to that
+          # one label: any other unknown label still fails.
+          ignore='label "xcode-27" is unknown'
+          if command -v shellcheck > /dev/null; then
+            actionlint -color -ignore "$ignore" -shellcheck "$(command -v shellcheck)" "${files[@]}"
+          else
+            echo "::warning::shellcheck is absent from this runner image; run: blocks will not be linted"
+            actionlint -color -ignore "$ignore" "${files[@]}"
+          fi
+
+      - name: zizmor
+        continue-on-error: ${{ github.event_name == 'push' }}
+        env:
+          FILE_COUNT: ${{ steps.files.outputs.count }}
+          FILE_LIST: ${{ steps.files.outputs.list }}
+        run: |
+          set -euo pipefail
+          if [ "$FILE_COUNT" = "0" ]; then
+            echo "No workflow files to audit."
+            exit 0
+          fi
+          mapfile -t files <<< "$FILE_LIST"
+          # Findings land as annotations on the diff rather than as a wall of
+          # text in the log, which is what makes them actionable in review.
+          zizmor --format=github --persona=regular "${files[@]}"

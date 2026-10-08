@@ -1,0 +1,30 @@
+# Dependabot runs on a schedule so a bump is waiting at 07:00 ICT rather than
+# appearing mid-workday.
+#
+# `time` is UTC, not local: 16:00Z is 23:00 in Bangkok (UTC+7), which leaves eight
+# hours of overnight runway for the CI matrix to finish before you wake. The old
+# 02:00 was 09:00 local — the same work, but it lands while you are already working.
+#
+# `day` is only valid on a weekly interval and omitted for the daily ones, because a
+# stray `day` there fails schema validation and silently disables the whole entry.
+version: 2
+updates:
+  # GitHub Actions run nightly. They are small, mechanical bumps whose failure mode
+  # is a CI error rather than a behaviour change, and a nightly window means a
+  # security release is patched the same night it lands.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "16:00"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+
+  # There is deliberately no `swift` entry. Dependabot's Swift ecosystem reads a
+  # Package.swift at the configured directory; this project has none — SwiftTerm is
+  # a local path package (`path: SwiftTermVendor`) and Highlightr is pinned through
+  # the Xcode project. Adding a directory entry would either find nothing or, worse,
+  # start bumping the vendored fork's manifest, which is ours to change by hand.
