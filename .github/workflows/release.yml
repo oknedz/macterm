@@ -37,7 +37,7 @@ jobs:
         run: scripts/package-release.sh dist
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MacTerm-Release
           path: dist/MacTerm-Release.dmg
