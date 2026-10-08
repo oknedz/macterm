@@ -5,8 +5,10 @@ on:
     tags:
       - 'v*'
 
+# Read-only by default. The write grant belongs to the one job that publishes a
+# release, not to the job that builds — zizmor flags workflow-level contents: write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # macOS only — a macOS app produces a single DMG, so there is no matrix here.
@@ -47,6 +49,8 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - name: Download DMG
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
