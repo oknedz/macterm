@@ -35,6 +35,9 @@ on:
 
 permissions:
   contents: read
+  # The pull-request files API. `contents: read` alone answers 403
+  # "Resource not accessible by integration" on the PR branch of this job.
+  pull-requests: read
 
 concurrency:
   group: lint-workflows-${{ github.ref }}
