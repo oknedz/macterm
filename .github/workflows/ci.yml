@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only by default: CI builds and tests, it never writes to the repository.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -26,6 +30,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # No job here pushes; leaving the token in .git/config would hand it to
+          # every later step for nothing.
+          persist-credentials: false
 
       - name: Install XcodeGen
         run: |
@@ -70,6 +78,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # No job here pushes; leaving the token in .git/config would hand it to
+          # every later step for nothing.
+          persist-credentials: false
 
       - name: Show toolchain
         run: xcodebuild -version && swift --version
@@ -127,4 +139,3 @@ jobs:
             -destination 'platform=macOS' \
             -onlyUsePackageVersionsFromResolvedFile \
             | xcbeautify
-# Verification PR: exercises the workflow lint path on a pull request.

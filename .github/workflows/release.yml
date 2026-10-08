@@ -21,6 +21,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # No job here pushes; leaving the token in .git/config would hand it to
+          # every later step for nothing.
+          persist-credentials: false
 
       - name: Install XcodeGen
         run: |
@@ -61,13 +65,14 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f -name "*.dmg" | sort
 
+      # `gh` ships with the runner and already knows how to do this, so there is no
+      # third-party action to pin, audit, or keep current.
       - name: Create Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          files: |
-            artifacts/**/*.dmg
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          args=(--generate-notes --title "$TAG")
+          if [[ "$TAG" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$TAG" artifacts/*.dmg "${args[@]}"
