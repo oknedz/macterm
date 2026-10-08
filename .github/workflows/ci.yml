@@ -127,3 +127,4 @@ jobs:
             -destination 'platform=macOS' \
             -onlyUsePackageVersionsFromResolvedFile \
             | xcbeautify
+# Verification PR: exercises the workflow lint path on a pull request.
