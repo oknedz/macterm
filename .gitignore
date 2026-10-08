@@ -20,3 +20,7 @@ DerivedData/
 
 # Generated code-graph output
 graphify-out/
+
+# Release packaging output (scripts/package-release.sh)
+dist/
+graphify-out/
